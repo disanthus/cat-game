@@ -500,7 +500,7 @@ select, input {
 }
 
 #fullProfileCatCanvas {
-    width: 280px;
+    width: 420px;
     max-width: 100%;
     height: auto;
     object-fit: contain;

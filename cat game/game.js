@@ -429,9 +429,7 @@
             base = homo("D", "d") ? "blue" : "black";
         }
 
-        const pattern = has("A", "A") || has("A", "a")
-            ? "tabby"
-            : "solid";
+        const pattern = has("A", "A") ? "tabby" : "solid";
 
         const fur = homo("L", "l") ? "long" : "short";
 
@@ -461,7 +459,7 @@
     }
 
     // Name prefixes based on base fur color
-
+    // Or by white amount
     function chooseCatPrefix(cat) {
         const p = phenotype(cat.genes);
 
@@ -472,12 +470,16 @@
             lilac: ["Misty", "Dove", "Heather", "Cloud"],
             red: ["Ember", "Flame", "Fox", "Rust"],
             cream: ["Honey", "Dawn", "Amber", "Sun"],
-            white: ["Snow", "Frost", "Cloud", "Pearl"]
         };
 
-        const choices = prefixesByColor[p.base] || [
-            "Willow", "Bramble", "Fern", "Moss"
-        ];
+        const prefixWhite = {
+            "white markings": ["Patch", "Spotted", "Moss", "Lichen"],
+            "high white": ["Snow", "Frost", "Cloud", "Pale", "White", "Bright"]
+        };
+
+        const choices = prefixWhite[p.whiteAmount]
+            || prefixesByColor[p.base]
+            || ["Willow", "Bramble", "Fern", "Moss"];
 
         return choices[Math.floor(Math.random() * choices.length)];
     }
@@ -588,6 +590,19 @@
         const sex = overrides.sex || pick(["female", "male"]);
         const age = overrides.age ?? rand(12, 48);
         const genes = overrides.genes || randomGenes();
+        const traits = phenotype(genes);
+        const coatShade = overrides.coatShade || CatRenderer.chooseCoatColor(traits.base);
+        const whiteMarking = overrides.whiteMarking ?? (() => {
+            const variants = {
+                "no white": [null],
+                "low white": ["socks-full", "socks-bib", "sansa", "bootfl"],
+                "white markings": ["winter", "tuxedo", "maskmantle"],
+                "high white": ["white", "van", "winter", "van-2", "mustache", "piebald"]
+            };
+
+            return pick(variants[traits.whiteAmount] || [null]);
+        })();
+
         const eyeColors = ["blue", "green", "amber", "gold", "copper"];
 
         // Choose a random eye color for the cat.
@@ -612,6 +627,8 @@
             rightEyeColor: otherEyeColor,
             mentorId: overrides.mentorId || null,
             genes,
+            coatShade,
+            whiteMarking,
             personality: overrides.personality || pick(PERSONALITIES),
             attractionToMales: overrides.attractionToMales ?? rand(0, 100),
             attractionToFemales: overrides.attractionToFemales ?? rand(0, 100),
@@ -700,7 +717,7 @@
         const form = new FormData(event.currentTarget);
         const age = Number(form.get("age"));
         const name = String(form.get("name") || "").trim();
-
+        console.log("Selected pattern:", form.get("pattern"));
         const cat = makeCat({
             name: name || undefined,
             sex: String(form.get("sex")),
@@ -720,8 +737,10 @@
             health: 100,
             energy: 90,
             hunger: 15
-        });
 
+        });
+        console.log("Created cat genes:", cat.genes);
+        console.log("Created cat phenotype:", phenotype(cat.genes));
         state.cats.push(cat);
         state.playerCatId = cat.id;
         selectedCatId = cat.id;
@@ -745,7 +764,7 @@
             moon: 1,
             dayOfMoon: 1,
             seasonIndex: 0,
-            prey: 3000,
+            prey: 9000,
             clanName: "WinterClan",
             cats: [],
             log: [],
@@ -811,7 +830,7 @@
                 }
             },
             { name: "Sedgepaw", sex: "female", age: 9, rank: "Apprentice", personality: "curious" },
-            { name: "Pipkit", sex: "male", age: 3, rank: "Kit", personality: "playful" },
+            { name: "Firekit", sex: "male", age: 3, rank: "Kit", personality: "playful" },
             { name: "Duskwhisker", sex: "female", age: 60, rank: "Elder", personality: "wary" }
         ];
 
@@ -1099,7 +1118,13 @@
             const canvas = $("profileCatCanvas");
 
             if (canvas) {
-                const traits = phenotype(c.genes);
+                const traits = {
+                    ...phenotype(c.genes),
+                    coatShade: c.coatShade,
+                    whiteMarking: c.whiteMarking,
+                    eyeColor: c.eyeColor,
+                    rightEyeColor: c.rightEyeColor
+                };
 
                 const faceCanvas = $("profileCatCanvas");
                 const fullCanvas = $("fullProfileCatCanvas");
@@ -2460,6 +2485,10 @@
                 if (cat.faith === undefined) cat.faith = 50;
                 if (!cat.eyeColor) {
                     cat.eyeColor = pick(["blue", "green", "amber", "gold", "copper"])
+                }
+                if (!cat.coatShade && cat.genes) {
+                    const catTraits = phenotype(cat.genes);
+                    cat.coatShade = CatRenderer.chooseCoatColor(catTraits.base);
                 }
                 if (!cat.relationships || typeof cat.relationships !== "object") {
                     cat.relationships = {};
