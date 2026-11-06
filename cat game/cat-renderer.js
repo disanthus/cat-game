@@ -258,10 +258,10 @@ window.CatRenderer = (() => {
 
         renderBase(canvas, coatColor, patternName);
         renderMarkings(canvas, traits.whiteMarking);
+        renderEyes(canvas, traits.eyeColor, traits.rightEyeColor);
         // Draw outline on top of markings
         const ctx = canvas.getContext("2d");
         ctx.drawImage(baseImage, 0, 0);
-        renderEyes(canvas, traits.eyeColor, traits.rightEyeColor);
 
         const crop = {
             x: 1400,
@@ -314,10 +314,10 @@ window.CatRenderer = (() => {
 
         renderBase(canvas, coatColor, patternName);
         renderMarkings(canvas, traits.whiteMarking);
+        renderEyes(canvas, traits.eyeColor, traits.rightEyeColor);
         // Draw outline on top of markings
         const ctx = canvas.getContext("2d");
         ctx.drawImage(baseImage, 0, 0);
-        renderEyes(canvas, traits.eyeColor, traits.rightEyeColor);
     }
 
     function renderBase(canvas, coatColor = "#808080", patternName = null) {
