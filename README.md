@@ -17,7 +17,7 @@ art + code made by me
 - fights & beef between cats
 - illnesses & injuries
 - even more autonomy (esp for npc leaders)
-- better rpg elements for players to make roles like leader/deputy/medcat more interesting
+- rpg elements for players to make roles like leader/deputy/medcat more interesting
 
 # technologies used
 - vscode
