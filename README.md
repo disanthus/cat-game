@@ -6,6 +6,7 @@ art + code made by me
 # features
 - character creator for player
 - randomized founder cats
+- cat art rendered layer by layer to make each one unique
 - npc autonomy
 - relationship and gossip system
 - light events system with event memory + emotional reaction
