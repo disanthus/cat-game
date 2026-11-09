@@ -8,6 +8,7 @@ art + code made by me
 - randomized founder cats
 - npc autonomy
 - relationship and gossip system
+- light events system with event memory + emotional reaction
 - breeding system with simple genetics 
 
 # planned features
