@@ -8,8 +8,10 @@ art + code made by me
 - randomized founder cats
 - cat art rendered layer by layer to make each one unique
 - npc autonomy
-- relationship and gossip system
-- light events system with event memory + emotional reaction
+- relationship system
+- gossip system
+- social reactions to events and interactions between cats
+- light events system with event memory
 - breeding system with simple genetics 
 
 # planned features
