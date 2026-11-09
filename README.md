@@ -1,5 +1,5 @@
 # cat-game
-browser cat game
+browser-based cat simulation game inspired by warriors by erin hunter
 
 art + code made by me
 
