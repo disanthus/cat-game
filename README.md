@@ -2,5 +2,5 @@
 browser cat game
 art + code made by me
 # screenshots
-<img width="621" height="492" alt="image" src="https://github.com/user-attachments/assets/6a433224-7ac4-4d57-b38d-9b9675681449" />
-<img width="589" height="1233" alt="image" src="https://github.com/user-attachments/assets/17a2fec5-9406-4b25-96d4-932d71267dc2" />
+<img width="608" height="643" alt="image" src="https://github.com/user-attachments/assets/77aa5e2d-de45-44e5-bfa8-20eb06b162fc" />
+<img width="602" height="648" alt="image" src="https://github.com/user-attachments/assets/74723fee-e69b-468b-93a1-1b101025793b" />
