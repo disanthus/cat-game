@@ -28,7 +28,6 @@ art + code made by me
 - html canvas
 
 # screenshots
-<img width="608" height="643" alt="image" src="https://github.com/user-attachments/assets/77aa5e2d-de45-44e5-bfa8-20eb06b162fc" />
-<img width="602" height="648" alt="image" src="https://github.com/user-attachments/assets/74723fee-e69b-468b-93a1-1b101025793b" />
-<img width="653" height="1221" alt="image" src="https://github.com/user-attachments/assets/11315a6c-cca8-423e-93e2-0e9e5fe2378a" />
-<img width="663" height="903" alt="image" src="https://github.com/user-attachments/assets/c936692b-93d3-4208-9707-ac2234928f00" />
+<img width="473" height="594" alt="image" src="https://github.com/user-attachments/assets/a5d36cfc-79d1-4d64-8344-8a83d4bcf3a8" />
+<img width="625" height="647" alt="image" src="https://github.com/user-attachments/assets/04f5abe8-2799-411e-8c9f-b11988667e0f" />
+
