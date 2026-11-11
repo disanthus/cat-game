@@ -829,14 +829,19 @@ input {
 .chronicle-entry:last-child {
   border-bottom: 0;
 }
+
 .chronicle-date {
   color: var(--muted);
   font:
     0.7rem "DM Mono",
     monospace;
 }
+
 .chronicle-text {
-  font-size: 0.9rem;
+    font-size: 0.9rem;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    min-width: 0;
 }
 
 .chronicle-type {

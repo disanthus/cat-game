@@ -71,7 +71,7 @@ window.SocialReactions = (() => {
         }
 
         if (cat.personality === "ambitious") {
-            change -=5;
+            change -=8;
         }
 
         if (cat.personality === "playful") {

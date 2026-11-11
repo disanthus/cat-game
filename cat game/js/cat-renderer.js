@@ -724,6 +724,177 @@ window.CatRenderer = (() => {
         "assets/cats/markings/lh-app-maskmantle.png"
     );
 
+    // apprentice shorthair (PLACEHOLDER!!)
+    loadArtworkBase("sh-apprentice",
+        "assets/cats/body/app-lh-base.png",
+        "assets/cats/body/app-silhouette-lh.png"
+    );
+    loadArtworkEyes("sh-apprentice",
+        "assets/cats/eyes/app-lh-l-eye.png",
+        "assets/cats/eyes/app-lh-r-eye.png"
+    )
+    loadArtworkPattern("sh-apprentice",
+        "tabby",
+        "assets/cats/patterns/applh-tabby.png"
+    );
+    loadArtworkMarking("sh-apprentice",
+        "maskmantle",
+        "assets/cats/markings/lh-app-maskmantle.png"
+    );
+
+    // kit longhair (MANTLE MISSING!!!)
+    loadArtworkBase("lh-kitten",
+        "assets/cats/body/kit-base.png",
+        "assets/cats/body/kit-silhouette.png"
+    );
+    loadArtworkEyes("lh-kitten",
+        "assets/cats/eyes/kit-l-eye.png",
+        "assets/cats/eyes/kit-r-eye.png"
+    )
+    loadArtworkPattern("lh-kitten",
+        "tabby",
+        "assets/cats/patterns/kit-tabby.png"
+    )
+
+    loadArtworkMarking("lh-kitten",
+        "bootfl",
+        "assets/cats/markings/kit-bootfl.png"
+    )
+
+    loadArtworkMarking("lh-kitten",
+        "maskmantle",
+        "assets/cats/markings/kit-maskmantle.png"
+    )
+
+    loadArtworkMarking("lh-kitten",
+        "piebald",
+        "assets/cats/markings/kit-piebald.png"
+    )
+
+    loadArtworkMarking("lh-kitten",
+        "sansa",
+        "assets/cats/markings/kit-sansa.png"
+    )
+
+    loadArtworkMarking("lh-kitten",
+        "socks-bib",
+        "assets/cats/markings/kit-socks-bib.png"
+    )
+
+    loadArtworkMarking("lh-kitten",
+        "socks-full",
+        "assets/cats/markings/kit-socks-full.png"
+    )
+
+    loadArtworkMarking("lh-kitten",
+        "stache",
+        "assets/cats/markings/kit-stache.png"
+    )
+
+    loadArtworkMarking("lh-kitten",
+        "van",
+        "assets/cats/markings/kit-van.png"
+    )
+
+    loadArtworkMarking("lh-kitten",
+        "tuxedo",
+        "assets/cats/markings/kit-tuxedo.png"
+    )
+
+    loadArtworkMarking("lh-kitten",
+        "van-2",
+        "assets/cats/markings/kit-van2.png"
+    )
+
+    loadArtworkMarking("lh-kitten",
+        "white",
+        "assets/cats/markings/kit-white.png"
+    )
+
+    loadArtworkMarking("lh-kitten",
+        "winter",
+        "assets/cats/markings/kit-winter.png"
+    )
+
+    // kit shorthair (PLACEHOLDER!!)
+    loadArtworkBase("sh-kitten",
+        "assets/cats/body/kit-base.png",
+        "assets/cats/body/kit-silhouette.png"
+    );
+    loadArtworkEyes("sh-kitten",
+        "assets/cats/eyes/kit-l-eye.png",
+        "assets/cats/eyes/kit-r-eye.png"
+    )
+    loadArtworkPattern("sh-kitten",
+        "tabby",
+        "assets/cats/patterns/kit-tabby"
+    )
+
+    loadArtworkPattern("sh-kitten",
+        "tabby",
+        "assets/cats/patterns/kit-tabby.png"
+    )
+
+    loadArtworkMarking("sh-kitten",
+        "bootfl",
+        "assets/cats/markings/kit-bootfl.png"
+    )
+
+    loadArtworkMarking("sh-kitten",
+        "maskmantle",
+        "assets/cats/markings/kit-maskmantle.png"
+    )
+
+    loadArtworkMarking("sh-kitten",
+        "piebald",
+        "assets/cats/markings/kit-piebald.png"
+    )
+
+    loadArtworkMarking("sh-kitten",
+        "sansa",
+        "assets/cats/markings/kit-sansa.png"
+    )
+
+    loadArtworkMarking("sh-kitten",
+        "socks-bib",
+        "assets/cats/markings/kit-socks-bib.png"
+    )
+
+    loadArtworkMarking("sh-kitten",
+        "socks-full",
+        "assets/cats/markings/kit-socks-full.png"
+    )
+
+    loadArtworkMarking("sh-kitten",
+        "stache",
+        "assets/cats/markings/kit-stache.png"
+    )
+
+    loadArtworkMarking("sh-kitten",
+        "van",
+        "assets/cats/markings/kit-van.png"
+    )
+
+    loadArtworkMarking("sh-kitten",
+        "tuxedo",
+        "assets/cats/markings/kit-tuxedo.png"
+    )
+
+    loadArtworkMarking("sh-kitten",
+        "van-2",
+        "assets/cats/markings/kit-van2.png"
+    )
+
+    loadArtworkMarking("sh-kitten",
+        "white",
+        "assets/cats/markings/kit-white.png"
+    )
+
+    loadArtworkMarking("sh-kitten",
+        "winter",
+        "assets/cats/markings/kit-winter.png"
+    )
+
     return {
         initialize,
         chooseCoatColor,

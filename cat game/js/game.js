@@ -89,6 +89,20 @@
         return true;
     }
 
+    // Initialize event module
+    function initializeStoryEvents() {
+        if (!window.StoryEvents) {
+            console.error("story-events.js has not loaded correctly.");
+            return false;
+        }
+
+        window.StoryEvents.initialize({
+            getState: () => state
+        });
+
+        return true;
+    }
+
     // Initialize social reactions module
     function initializeSocialReactions() {
         if (!window.SocialReactions) {
@@ -360,43 +374,55 @@
 
             // Become mates
             if (effect.type === "become_mates") {
-                const first = cats.find(
-                    cat => cat.id === effect.from
-                );
+                const first = participants[effect.from];
+                const second = participants[effect.to];
 
-                const second = cats.find(
-                    cat => cat.id === effect.to
-                );
-
-                if (first && second) {
-                    if (!Array.isArray(first.relationships.mates)) {
-                        first.relationships.mates = [];
-                    }
-
-                    if (!Array.isArray(second.relationships.mates)) {
-                        second.relationships.mates = [];
-                    }
-
-                    if (!first.relationships.mates.includes(second.id)) {
-                        first.relationships.mates.push(second.id);
-                    }
-
-                    if (!second.relationships.mates.includes(first.id)) {
-                        second.relationships.mates.push(first.id);
-                    }
-
-                    // Remove their existing crushes on each other.
-                    first.relationships.crushes =
-                        (first.relationships.crushes || []).filter(id => id !== second.id);
-
-                    second.relationships.crushes =
-                        (second.relationships.crushes || []).filter(id => id !== first.id);
-
-                    recordCatEvent("became_mates", [first, second], {
-                        importance: 5,
-                        description: `${first.name} and ${second.name} became mates after confessing their feelings.`
-                    });
+                if (!first || !second) {
+                    console.warn("Could not find cats for become_mates effect:", effect);
+                    continue;
                 }
+
+                if (!first.relationships) first.relationships = {};
+                if (!second.relationships) second.relationships = {};
+
+                if (!Array.isArray(first.relationships.mates)) {
+                    first.relationships.mates = [];
+                }
+
+                if (!Array.isArray(second.relationships.mates)) {
+                    second.relationships.mates = [];
+                }
+
+                if (!Array.isArray(first.relationships.crushes)) {
+                    first.relationships.crushes = [];
+                }
+
+                if (!Array.isArray(second.relationships.crushes)) {
+                    second.relationships.crushes = [];
+                }
+
+                // Add each cat to the other's mates list.
+                if (!first.relationships.mates.includes(second.id)) {
+                    first.relationships.mates.push(second.id);
+                }
+
+                if (!second.relationships.mates.includes(first.id)) {
+                    second.relationships.mates.push(first.id);
+                }
+
+                // Clear their crushes on each other.
+                first.relationships.crushes =
+                    first.relationships.crushes.filter(id => id !== second.id);
+
+                second.relationships.crushes =
+                    second.relationships.crushes.filter(id => id !== first.id);
+
+                recordCatEvent("became_mates", [first, second], {
+                    importance: 5,
+                    description: `${first.name} and ${second.name} became mates after confessing their feelings.`
+                });
+
+                console.log(`${first.name} and ${second.name} are now mates!`);
             }
         }
     }
@@ -828,6 +854,11 @@
             log: [],
             playerCatId: null,
             nextBirthNumber: 1,
+            storyHistory: {
+                lastEventDay: -1,
+                eventCooldowns: {},
+                pairEvents: {}
+            },
             version: 1
         };
 
@@ -1142,19 +1173,23 @@
         }
     }
 
+
     function renderChronicle() {
         $("chronicleList").innerHTML = state.log
             .map(event => `
-                    <div class="event-item">
-                        <span class="event-dot"></span>
-                        <div>
-                            ${escapeHtml(event.text)}
-                            <small>
-                                ${escapeHtml(event.season)} - Day ${event.day} - ${escapeHtml(event.type)}
-                            </small>
-                        </div>
+            <div class="chronicle-entry">
+                <span class="chronicle-date">
+                    ${escapeHtml(event.season)} - Day ${event.day}
+                </span>
+
+                <div class="chronicle-text">
+                    ${escapeHtml(event.text)}
+                    <div class="chronicle-type">
+                        ${escapeHtml(event.type)}
                     </div>
-                `)
+                </div>
+            </div>
+        `)
             .join("") || `<p class="empty-state">No clan history yet!</p>`;
     }
 
@@ -2430,13 +2465,18 @@
             logEvent("clan", "Several cats have begun to worry about the shrinking prey stores.");
         }
 
-
         // Sometimes trigger a larger story event.
         if (
             window.StoryEvents &&
+            StoryEvents.canTriggerEvent() &&
             StoryEvents.shouldTriggerEvent()
         ) {
-            const storyEvent = StoryEvents.getRandomEvent();
+            // Only select events whose global cooldown has expired.
+            const availableEvents = StoryEvents.events.filter(
+                event => !StoryEvents.isEventOnCooldown(event)
+            );
+
+            const storyEvent = StoryEvents.getRandomEvent(availableEvents);
 
             if (storyEvent) {
                 const participants = StoryEvents.selectParticipants(
@@ -2446,6 +2486,9 @@
                 );
 
                 if (participants) {
+                    // Record the event and start its global cooldown.
+                    StoryEvents.recordEvent(storyEvent);
+
                     const playerInvolved = StoryEvents.involvesPlayer(
                         participants,
                         state.playerCatId
@@ -2455,14 +2498,24 @@
                         "story",
                         `${storyEvent.title}: ${storyEvent.description}`
                     );
-                    // Show event and choices to player
-                    // Choice affects outcome
+
+                    // Player participates in the event.
                     if (playerInvolved) {
+
                         StoryEvents.showStoryEvent(
                             storyEvent,
                             participants,
                             (choice, eventParticipants) => {
-                                applyStoryChoice(choice, eventParticipants);
+                                console.log("1. Player event callback reached:", choice);
+                                console.log("2. Participants:", eventParticipants);
+
+                                try {
+                                    applyStoryChoice(choice, eventParticipants);
+                                    console.log("3. applyStoryChoice completed");
+                                } catch (error) {
+                                    console.error("ERROR in applyStoryChoice:", error);
+                                    return;
+                                }
 
                                 const rawOutcome =
                                     choice.outcome ||
@@ -2474,17 +2527,22 @@
                                     eventParticipants
                                 );
 
+                                console.log("4. Outcome:", outcome);
+
                                 logEvent(
                                     "story",
                                     `${storyEvent.title} — ${outcome}`
                                 );
+
+                                console.log("5. Chronicle log after logging:", state.log[0]);
 
                                 saveGame(false);
                                 render();
                                 showNotice(outcome);
                             }
                         );
-                        // runs npc dialogue in events
+
+                        // NPCs participate in a branching dialogue event.
                     } else if (storyEvent.dialogue) {
                         StoryEvents.runNpcDialogue(
                             storyEvent,
@@ -2503,15 +2561,24 @@
                                 );
                             }
                         );
+
+                        // NPCs participate in a regular event.
                     } else {
                         const choice = storyEvent.choices[
-                            Math.floor(Math.random() * storyEvent.choices.length)
+                            Math.floor(
+                                Math.random() * storyEvent.choices.length
+                            )
                         ];
+
+                        StoryEvents.recordEventParticipants(
+                            storyEvent,
+                            participants
+                        );
 
                         applyStoryChoice(choice, participants);
 
                         const outcome = StoryEvents.formatText(
-                            choice.outcome,
+                            choice.outcome || choice.text,
                             participants
                         );
 
@@ -2859,7 +2926,7 @@
     }
 
     initializeNpcAI();
-
+    initializeStoryEvents();
     initializeSocialReactions();
     initializeGossip();
     CatRenderer.initialize(COLORS);

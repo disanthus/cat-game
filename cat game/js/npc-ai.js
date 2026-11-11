@@ -216,33 +216,33 @@ window.NPC = (() => {
                 game.relationship(cat, other) + change
             );
 
-            // Strong bonds can lead to becoming mates.
-            if (
-                game.canBecomeNaturalMates(cat, other) &&
-                !cat.relationships.mates.includes(other.id) &&
-                game.chance(0.10)
-            ) {
-                if (!cat.relationships.mates.includes(other.id)) {
-                    cat.relationships.mates.push(other.id);
-                }
+            // // Strong bonds can lead to becoming mates.
+            // if (
+            //     game.canBecomeNaturalMates(cat, other) &&
+            //     !cat.relationships.mates.includes(other.id) &&
+            //     game.chance(0.10)
+            // ) {
+            //     if (!cat.relationships.mates.includes(other.id)) {
+            //         cat.relationships.mates.push(other.id);
+            //     }
 
-                if (!other.relationships.mates.includes(cat.id)) {
-                    other.relationships.mates.push(cat.id);
-                }
+            //     if (!other.relationships.mates.includes(cat.id)) {
+            //         other.relationships.mates.push(cat.id);
+            //     }
 
-                cat.relationships.crushes =
-                    cat.relationships.crushes.filter(id => id !== other.id);
+            //     cat.relationships.crushes =
+            //         cat.relationships.crushes.filter(id => id !== other.id);
 
-                other.relationships.crushes =
-                    other.relationships.crushes.filter(id => id !== cat.id);
+            //     other.relationships.crushes =
+            //         other.relationships.crushes.filter(id => id !== cat.id);
 
-                result = `${cat.name} and ${other.name} have become mates!`;
+            //     result = `${cat.name} and ${other.name} have become mates!`;
 
-                game.recordCatEvent("became_mates", [cat, other], {
-                    importance: 5,
-                    description: `${cat.name} and ${other.name} became mates!`
-                });
-            }
+            //     game.recordCatEvent("became_mates", [cat, other], {
+            //         importance: 5,
+            //         description: `${cat.name} and ${other.name} became mates!`
+            //     });
+            // }
 
             // Sometimes develop a crush while socializing.
             const attraction = other.sex === "male"

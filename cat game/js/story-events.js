@@ -2,10 +2,28 @@
 /* Story Events */
 
 window.StoryEvents = (() => {
+    let game = null;
+
+    function initialize(dependencies) {
+        game = dependencies;
+    }
 
     // How likely a story event is to occur on a
     // day when the game checks for one.
-    const EVENT_CHANCE = 0.25;
+    const EVENT_CHANCE = 1;
+
+    // Minimum number of days between story events
+    const STORY_EVENT_BUFFER = 2;
+
+    // Minimum number of days before same event can happen again globally
+    const EVENT_COOLDOWNS = {
+        moonlit_confession: 20,
+        strange_footprints: 8,
+        jealous_words: 5,
+        abandoned_kit: 30,
+        broken_ground: 10,
+        last_goodbye: 30
+    }
 
     const events = [
 
@@ -56,6 +74,7 @@ window.StoryEvents = (() => {
 
             requiresCats: 2,
             participantType: "confession_pair",
+            pairOnce: true,
 
             dialogue: {
                 start: {
@@ -92,7 +111,7 @@ window.StoryEvents = (() => {
 
                     choices: [
                         {
-                            text: "Tell them how you feel.",
+                            text: "Confess.",
                             next: "confession"
                         },
                         {
@@ -109,21 +128,21 @@ window.StoryEvents = (() => {
                     // TODO: add personality text
                     personalityText: {
                         bold:
-                            "\"{target}, I love you.\"",
+                            "{confessor} purrs. \"{target}, I love you.\"",
                         gentle:
                             "{confessor}'s ears flush, then quietly: \"I really enjoy spending time with you, {target}.\"",
                         curious:
-                            "{confessor} asks {target} to meet them at moonhigh.",
+                            "",
                         patient:
-                            "{confessor} asks {target} to meet them at moonhigh.",
+                            "",
                         helpful:
-                            "{confessor} asks {target} to meet them at moonhigh. {confessor} arrives with prey, admitting they thought {target} might be hungry. After sharing a few bites, {confessor} raises their head and gazes intently at {target} -- like they have something on their mind.",
+                            "",
                         wary:
-                            "{confessor} asks {target} to meet them at moonhigh. {target} notices that {confessor} looks especially nervous tonight, shuffling their paws and glancing around furtively like they're worried they're being watched. {confessor} seems like they might lose their nerve at any moment.",
+                            "\"I feel safe with you, {target}, in a way I've never felt with any other cat,\" {confessor} admits, the words rushing from their mouth before their courage can falter. Ears red, {confessor} looks away. \"And...I like you. I *love* you, i think.\"\n",
                         playful:
                             "",
                         proud:
-                            "",
+                            "\"You're alright, {target},\" {confessor} admits with a sniff. It takes {target} a heartbeat to realize that this is a confession. \"And I think we make a good pair. What do you think?\"",
                         observant:
                             "",
                         stubborn:
@@ -147,14 +166,14 @@ window.StoryEvents = (() => {
 
                 accept: {
                     speaker: "target",
-                    text: "{target} bumps their forehead against {confessor}'s cheek. \"I've been <i>waiting</i> for you to say that.\"",
+                    text: "{target} bumps their forehead against {confessor}'s cheek. \"I've been *waiting* for you to say that.\"",
                     // TODO: add personality text
                     effects: [
                         { type: "relationship", value: 20 },
                         {
                             type: "memory",
                             value: "mutual_confession",
-                            importance: 4
+                            importance: 5
                         },
                         {
                             type: "become_mates",
@@ -170,7 +189,7 @@ window.StoryEvents = (() => {
                     // TODO: add personality text
                     personalityText: {
                         bold:
-                            "{target} frowns. \"I like you better as a friend.\"",
+                            "{target} frowns. \"I like you better as a friend. Sorry.\"",
                         gentle:
                             "\"I... don't feel the same way. I'm sorry.\" {target} brushes their shoulder against {confessor}'s as a comforting gesture. \"But I appreciate the courage it took to tell me this. I hope we can stay friends.\"",
                         curious:
@@ -232,6 +251,7 @@ window.StoryEvents = (() => {
 
             requiresCats: 2,
             participants: ["jealous_cat", "clanmate"],
+            pairCooldown: 10,
 
             choices: [
                 {
@@ -305,6 +325,7 @@ window.StoryEvents = (() => {
 
             requiresCats: 2,
             participants: ["rescuer", "victim"],
+            pairCooldown: 30,
 
             choices: [
                 {
@@ -375,14 +396,181 @@ window.StoryEvents = (() => {
 
     ];
 
+    // Get or initialize persistent story history
+    function getStoryHistory() {
+        const state = game?.getState();
+
+        if (!state) {
+            console.error("StoryEvents: Game state is unavailable.");
+            return null;
+        }
+
+        if (!state.storyHistory) {
+            state.storyHistory = {
+                lastEventDay: -1,
+                eventCooldowns: {},
+                pairEvents: {}
+            };
+        }
+
+        return state.storyHistory;
+    }
+
+    // debug
+    function getCurrentDay() {
+        return game?.getState()?.day;
+    }
+
+    // Generate a consistent ID for a pair of cats
+    // CatA + CatB = CatB + CatA
+    function getPairEventKey(eventId, catA, catB) {
+        const ids = [catA.id, catB.id].sort();
+
+        return `${eventId}_${ids[0]}_${ids[1]}`;
+    }
+
+    function canPairExperienceEvent(event, catA, catB) {
+        if (!event || !catA || !catB) return false;
+
+        const state = game?.getState();
+        const history = getStoryHistory();
+
+        if (!state || !history) return false;
+
+        const key = getPairEventKey(event.id, catA, catB);
+        const previous = history.pairEvents[key];
+
+        if (previous === undefined) return true;
+
+        if (event.pairOnce) return false;
+
+        if (event.pairCooldown) {
+            const lastDay = typeof previous === "object"
+                ? previous.day
+                : previous;
+
+            return state.day - lastDay >= event.pairCooldown;
+        }
+
+        return true;
+    }
+
+    // helper for non-confession events
+    function areParticipantsEligible(event, participants) {
+        if (!event.pairOnce && !event.pairCooldown) {
+            return true;
+        }
+
+        const cats = Array.isArray(participants)
+            ? participants
+            : Object.values(participants || {});
+
+        for (let i = 0; i < cats.length; i++) {
+            for (let j = i + 1; j < cats.length; j++) {
+                if (!canPairExperienceEvent(event, cats[i], cats[j])) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    // Record pair history for every combination
+    // of participants in an event
+    function recordEventParticipants(event, participants) {
+        if (!event || !participants) return;
+
+        // Only track events that explicitly request pair history.
+        if (!event.pairOnce && !event.pairCooldown) return;
+
+        const cats = Array.isArray(participants)
+            ? participants
+            : Object.values(participants);
+
+        const uniqueCats = cats.filter((cat, index) =>
+            cat &&
+            cats.findIndex(other => other?.id === cat.id) === index
+        );
+
+        // Record every unique pair.
+        for (let i = 0; i < uniqueCats.length; i++) {
+            for (let j = i + 1; j < uniqueCats.length; j++) {
+                recordPairEvent(
+                    event.id,
+                    uniqueCats[i],
+                    uniqueCats[j]
+                );
+            }
+        }
+    }
+
+    function canTriggerEvent() {
+        const state = game?.getState();
+        const history = getStoryHistory();
+
+        if (!state || !history) return false;
+
+        return (
+            state.day - history.lastEventDay >= STORY_EVENT_BUFFER
+        );
+    }
+
+    // Check individual event cooldowns
+    function isEventOnCooldown(event) {
+        const state = game?.getState();
+        const history = getStoryHistory();
+
+        if (!history) {
+            return false;
+        }
+
+        const lastDay = history.eventCooldowns[event.id];
+
+        if (lastDay === undefined) {
+            return false;
+        }
+
+        const cooldown = EVENT_COOLDOWNS[event.id] || 0;
+
+        return state.day - lastDay < cooldown;
+    }
+
+    // Record that an event has started
+    function recordEvent(event) {
+        const state = game?.getState();
+        const history = getStoryHistory();
+
+        if (!history) {
+            return;
+        }
+
+        history.lastEventDay = state.day;
+        history.eventCooldowns[event.id] = state.day;
+    }
+
+    // Record an interaction between two cats
+    function recordPairEvent(eventId, catA, catB) {
+        const state = game?.getState();
+        const history = getStoryHistory();
+
+        if (!history || !catA || !catB) return;
+
+        const key = getPairEventKey(eventId, catA, catB);
+
+        history.pairEvents[key] = {
+            day: state.day
+        };
+    }
+
     // Roll for an event on a day when the game
-    // decides to check for one.
+    // decides to check for one
     function shouldTriggerEvent() {
         return Math.random() < EVENT_CHANCE;
     }
 
     // Return a random event, optionally excluding
-    // events that cannot currently happen.
+    // events that cannot currently happen
     function getRandomEvent(availableEvents = events) {
         if (availableEvents.length === 0) {
             return null;
@@ -428,7 +616,14 @@ window.StoryEvents = (() => {
                         target &&
                         target.id !== confessor.id &&
                         target.age >= 12 &&
-                        !(target.relationships?.mates?.length > 0)
+                        !(target.relationships?.mates?.length > 0) &&
+
+                        // Prevent repeated confessions between this pair.
+                        canPairExperienceEvent(
+                            event,
+                            confessor,
+                            target
+                        )
                     )
                     .map(target => ({ confessor, target }));
             });
@@ -449,6 +644,10 @@ window.StoryEvents = (() => {
         }
 
         const selected = shuffle(living).slice(0, required);
+
+        if (!areParticipantsEligible(event, selected)) {
+            return null;
+        }
 
         // If the event defines roles, return an object keyed by role
         if (Array.isArray(roles)) {
@@ -582,6 +781,22 @@ window.StoryEvents = (() => {
 
     // Display an event with branching dialogue
     function showStoryEvent(event, participants, onChoice) {
+        function completeEvent(result) {
+            console.log("PLAYER EVENT COMPLETED:", event.id);
+            console.log("Ending node:", result);
+
+            recordEventParticipants(event, participants);
+
+            const finalResult = {
+                ...result,
+                outcome: result.outcome || getDialogueText(result, participants)
+            };
+
+            console.log("Final outcome:", finalResult.outcome);
+
+            onChoice(finalResult, participants);
+        }
+
         let modal = document.getElementById("storyEventModal");
 
         if (!modal) {
@@ -664,7 +879,7 @@ window.StoryEvents = (() => {
                 : null;
 
             const playerMakesDecision =
-                decisionCat?.id === window.gameState?.playerCatId;
+                decisionCat?.id === game?.getState()?.playerCatId;
 
             // helper to decide if npc confesses or not
             function shouldNpcConfess(confessor, target) {
@@ -749,7 +964,7 @@ window.StoryEvents = (() => {
                             showNode(choice.next);
                         } else {
                             modal.remove();
-                            onChoice(choice, participants);
+                            completeEvent(choice, participants);
                         }
                     });
 
@@ -772,7 +987,7 @@ window.StoryEvents = (() => {
                         showNode(choice.next);
                     } else {
                         modal.remove();
-                        onChoice(choice, participants);
+                        completeEvent(choice);
                     }
                 });
 
@@ -787,7 +1002,7 @@ window.StoryEvents = (() => {
 
                 button.addEventListener("click", () => {
                     modal.remove();
-                    onChoice(node, participants);
+                    completeEvent(node);
                 });
 
                 panel.appendChild(button);
@@ -811,7 +1026,7 @@ window.StoryEvents = (() => {
 
                 button.addEventListener("click", () => {
                     modal.remove();
-                    onChoice(choice, participants);
+                    completeEvent(choice);
                 });
 
                 panel.appendChild(button);
@@ -831,13 +1046,6 @@ window.StoryEvents = (() => {
         if (!event.dialogue || !participants) return;
 
         const dialogueLines = [];
-        const confessor = participants.confessor;
-        const target = participants.target;
-
-        const targetHasCrush = Boolean(
-            target?.relationships?.crushes?.includes(confessor?.id)
-        );
-
         let nodeId = "start";
         let attempts = 0;
 
@@ -851,59 +1059,50 @@ window.StoryEvents = (() => {
                 return;
             }
 
-            // Resolve the dialogue using the speaker's personality.
+            // Add this dialogue line to the event's conversation.
             const text = getDialogueText(node, participants);
 
             if (text) {
                 const speaker = participants[node.speaker];
 
                 dialogueLines.push(
-                    speaker
-                        ? `${speaker.name}: ${text}`
-                        : text
+                    speaker ? `${speaker.name}: ${text}` : text
                 );
             }
 
-            // Ending node: apply its effects through the callback.
+            // We've reached the ending. Apply its effects and finish.
             if (!node.choices || node.choices.length === 0) {
+                recordEventParticipants(event, participants);
+
                 onComplete({
                     ...node,
                     outcome: dialogueLines.join(" ")
                 });
+
                 return;
             }
 
-            let choice;
+            // Choose the next dialogue branch.
+            const choice = chooseNpcDialogueChoice(node, participants);
 
-            if (
-                nodeId === "start" &&
-                event.participantType === "confession_pair"
-            ) {
-                choice = node.choices[0];
-            } else if (
-                nodeId === "confession" &&
-                event.participantType === "confession_pair"
-            ) {
-                choice = targetHasCrush
-                    ? node.choices.find(c => c.next === "accept")
-                    : node.choices.find(c => c.next === "reject");
-            } else {
-                choice = node.choices[
-                    Math.floor(Math.random() * node.choices.length)
-                ];
+            if (!choice) {
+                console.error("NPC could not choose a dialogue option:", nodeId);
+                return;
             }
 
-            if (!choice) return;
+            // Move to the next dialogue node.
+            if (!choice.next) {
+                recordEventParticipants(event, participants);
 
-            if (choice.next) {
-                nodeId = choice.next;
-            } else {
                 onComplete({
                     ...choice,
                     outcome: dialogueLines.join(" ")
                 });
+
                 return;
             }
+
+            nodeId = choice.next;
         }
 
         console.error("NPC dialogue exceeded maximum steps.");
@@ -912,14 +1111,26 @@ window.StoryEvents = (() => {
     // Expose the event library without placing
     // variables in the global namespace
     return {
+        initialize,
         events,
+        getStoryHistory,
         formatText: getDialogueText,
         shouldTriggerEvent,
         getRandomEvent,
         selectParticipants,
         involvesPlayer,
         showStoryEvent,
-        runNpcDialogue
+        runNpcDialogue,
+
+        // Cooldown and history helpers
+        getCurrentDay,
+        canTriggerEvent,
+        isEventOnCooldown,
+        recordEvent,
+        canPairExperienceEvent,
+        areParticipantsEligible,
+        recordEventParticipants,
+        recordPairEvent
     };
 
 })();
