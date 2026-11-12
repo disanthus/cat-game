@@ -216,6 +216,8 @@ window.CatRenderer = (() => {
 
     const COAT_VARIATIONS = {
         black: [
+            "#1b1b20",
+            "#282830",
             "#303039",
             "#393A40",
             "#45464A",
@@ -224,6 +226,8 @@ window.CatRenderer = (() => {
 
         chocolate: [
             "#68432F",
+            "#4e3527",
+            "#4b3021",
             "#79513A",
             "#895D43",
             "#704B3B"
@@ -233,18 +237,26 @@ window.CatRenderer = (() => {
             "#71818F",
             "#82909D",
             "#929EAA",
-            "#667786"
+            "#667786",
+            "#78848f",
+            "#9ba6b1",
+            "#a9b7c5"
+
         ],
 
         lilac: [
             "#A99AA8",
             "#B9A9B6",
-            "#C4B5BF"
+            "#b9b5b9",
+            "#C4B5BF",
+            "#d3c9d0"
         ],
 
         red: [
+            "#b84d32",
             "#B85D32",
             "#C87542",
+            "#c46022",
             "#D4864E",
             "#E0955B",
             "#A94F2D"
@@ -253,6 +265,7 @@ window.CatRenderer = (() => {
         cream: [
             "#E8D5A7",
             "#F0DDB7",
+            "#e7ddc8",
             "#F4E5C5",
             "#DDC89B"
         ],
@@ -260,6 +273,8 @@ window.CatRenderer = (() => {
         white: [
             "#EEEDEA",
             "#F5F2E9",
+            "#f0f0f0",
+            "#f3f3f3",
             "#E5E1D8"
         ]
     };

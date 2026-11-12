@@ -10,7 +10,7 @@ window.StoryEvents = (() => {
 
     // How likely a story event is to occur on a
     // day when the game checks for one.
-    const EVENT_CHANCE = 1;
+    const EVENT_CHANCE = .2;
 
     // Minimum number of days between story events
     const STORY_EVENT_BUFFER = 2;
@@ -32,6 +32,7 @@ window.StoryEvents = (() => {
         // -------------------------------------
 
         {
+            // wouldnt it be tea if first choice had the potential of triggering a fight with a predator or talking to a loner etc
             id: "strange_footprints",
             title: "Strange Footprints",
             category: "mystery",
@@ -201,7 +202,7 @@ window.StoryEvents = (() => {
                         wary:
                             "{target} hesitates, a small frown forming on their face. The rejection there comes a beat before they finally muster the courage to verbalize it: \"I'm sorry, {confessor}. I just-- we can't be together. I'm sorry.\"",
                         playful:
-                            "{target} laughs. When {confessor} doesn't start laughing along with them, {target}'s face falls. \"Oh, you're serious?!\" Embarrassment flushes their ears red. \"Sorry, {confessor}, but ",
+                            "{target} laughs. When {confessor} doesn't start laughing along with them, {target}'s face falls. \"Oh, you're serious?!\" Embarrassment flushes their ears red. \"Sorry, {confessor}, but ... I just like us better as friends.",
                         proud:
                             "{target} scoffs. \"You? And me? No way. Not even in your dreams.\"",
                         observant:

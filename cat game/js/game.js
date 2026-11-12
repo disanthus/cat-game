@@ -1184,8 +1184,7 @@
 
                 <div class="chronicle-text">
                     ${escapeHtml(event.text)}
-                    <div class="chronicle-type">
-                        ${escapeHtml(event.type)}
+                    <div class="chronicle-type">Event type: ${escapeHtml(event.type)}
                     </div>
                 </div>
             </div>
