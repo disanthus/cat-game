@@ -460,12 +460,12 @@
     const RANKS = ["Leader", "Deputy", "Medicine Cat", "Warrior", "Apprentice", "Kit", "Elder"];
 
     const LOCATIONS = [
-        { id: "pinewood", name: "Pinewood Trail", emoji: "🌲", desc: "A familiar path with plenty of cover and small prey.", difficulty: "Easy", risk: 1, prey: [2, 5], skill: "stealth" },
-        { id: "river", name: "Glassriver Bend", emoji: "🌊", desc: "A quick river runs between smooth stones. Fish are plentiful, but the current is tricky.", difficulty: "Moderate", risk: 2, prey: [3, 6], skill: "swimming" },
-        { id: "ridge", name: "Windcut Ridge", emoji: "⛰️", desc: "An exposed ridge where sharp eyes and steady paws matter.", difficulty: "Hard", risk: 3, prey: [1, 4], skill: "stamina" },
-        { id: "ruins", name: "Old Twoleg Ruins", emoji: "🪨", desc: "Strange scents, hidden spaces, and the occasional useful discovery.", difficulty: "Moderate", risk: 2, prey: [0, 2], skill: "curiosity" },
-        { id: "moonpool", name: "Moonpool Hollow", emoji: "🌙", desc: "A quiet hollow where the clan leaves offerings and listens to old stories.", difficulty: "Story", risk: 1, prey: [0, 0], skill: "intuition" },
-        { id: "bramble", name: "Bramble Maze", emoji: "🍂", desc: "Dense thorn tunnels make this a good test of patience and agility.", difficulty: "Hard", risk: 3, prey: [1, 4], skill: "agility" }
+        { id: "pinewood", name: "Pinewood Trail", emoji: "↟𖠰˚☀︎↟𖠰", desc: "A familiar path with plenty of cover and small prey.", difficulty: "Easy", risk: 1, prey: [2, 5], skill: "stealth" },
+        { id: "river", name: "Glassriver Bend", emoji: "°‧ 𓆝 𓆟 𓆞 ·｡", desc: "A quick river runs between smooth stones. Fish are plentiful, but the current is tricky.", difficulty: "Moderate", risk: 2, prey: [3, 6], skill: "swimming" },
+        { id: "ridge", name: "Windcut Ridge", emoji: "ᨒ↟𖠰", desc: "An exposed ridge where sharp eyes and steady paws matter.", difficulty: "Hard", risk: 3, prey: [1, 4], skill: "stamina" },
+        { id: "ruins", name: "Old Twoleg Ruins", emoji: "🏘", desc: "Strange scents, hidden spaces, and the occasional useful discovery.", difficulty: "Moderate", risk: 2, prey: [0, 2], skill: "curiosity" },
+        { id: "moonpool", name: "Moonpool Hollow", emoji: "꒷꒦︶꒷꒦︶ ๋ ࣭ ⭑꒷꒦", desc: "A quiet hollow where the clan leaves offerings and listens to old stories.", difficulty: "Story", risk: 1, prey: [0, 0], skill: "intuition" },
+        { id: "bramble", name: "Bramble Maze", emoji: "⸙. ݁₊ ⸙͎. ݁˖ 𓃦. ݁𓍊. ݁ ݁𓃴", desc: "Dense thorn tunnels make this a good test of patience and agility.", difficulty: "Hard", risk: 3, prey: [1, 4], skill: "agility" }
     ];
 
     const PERSONALITIES = [
@@ -620,14 +620,6 @@
         }
 
         return `${hairLength}-${ageGroup}`;
-    }
-
-    function catEmoji(cat) {
-        const p = phenotype(cat.genes);
-
-        if (p.base === "white" || p.whiteAmount === "high white") return "🐈";
-
-        return cat.sex === "female" ? "🐈" : "🐈‍⬛";
     }
 
     // Get possible name prefixes based on the cat's appearance.
@@ -1280,7 +1272,6 @@
 
         $("catRoster").innerHTML = cats.map(c =>
             `<button class="cat-row ${c.id === (selectedCatId || state.playerCatId) ? "selected" : ""}" data-select-cat="${c.id}">
-        <span class="cat-avatar" style="--fur:${catColor(c)}">${catEmoji(c)}</span>
         <span class="cat-row-info">
           <span class="cat-row-name">${escapeHtml(c.name)}</span>
           <span class="cat-row-sub">${escapeHtml(c.rank)} · ${ageLabel(c.age)}</span>

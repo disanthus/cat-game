@@ -30,26 +30,26 @@ window.StoryEvents = (() => {
         const roll = Math.random();
         const warningBonus = warned ? FOOTPRINTS_RULES.warningBonus : 0;
         const names = patrol.map(cat => cat.name).join(", ");
-        const preparation = warned ? "After warning the clan and preparing, " : "Following the tracks, ";
+        const preparation = warned ? "The patrol returns to camp to warn their clanmates. With all the kits and apprentices accounted for, the patrol heads back out again to review the tracks again. " : "Following the tracks, ";
         let outcome;
 
         if (forcedPredator || roll < predatorChance) {
             const predator = pick(["fox", "badger", "dog"]);
             const success = chance(clamp(0.35 + averageSkill("fighting") * 0.05 + warningBonus, 0.05, 0.95));
             if (success) {
-                outcome = `${preparation}${names} encountered a ${predator} and drove it away safely.`;
+                outcome = `${preparation}${names} encounter a ${predator} and drive it away without anyone getting injured.`;
             } else {
                 const injured = pick(patrol);
                 const damage = rand(8, 20);
                 effects.push({ type: "health", catId: injured.id, value: -damage });
-                outcome = `${preparation}${names} encountered a ${predator}. ${injured.name} lost ${damage} health during the retreat.${injured.health > damage ? "" : ` ${injured.name} died from their injuries.`}`;
+                outcome = `${preparation}${names} encounter a ${predator}. ${injured.name} loses ${damage} health during the retreat.${injured.health > damage ? "" : ` ${injured.name} die from their injuries.`}`;
             }
         } else if (roll < predatorChance + FOOTPRINTS_RULES.otherCatChance) {
             const stranger = pick(["loner", "kittypet", "rogue"]);
             const friendly = chance(clamp(0.40 + averageSkill("intuition") * 0.04 + warningBonus, 0.05, 0.95));
-            outcome = `${preparation}${names} met a ${stranger}. ${friendly ? "They had a calm conversation and parted on friendly terms." : "They had a tense conversation that nearly ended in a fight."}`;
+            outcome = `${preparation}${names} meet a ${stranger}. ${friendly ? "They have a calm conversation and part on friendly terms." : "They have a tense conversation that nearly ended in a fight."}`;
         } else {
-            outcome = `${preparation}${names} found nothing and returned to camp.`;
+            outcome = `${preparation}${names} find nothing and return to camp.`;
             if (!warned && averageSkill("hunting") < FOOTPRINTS_RULES.poorTrackingThreshold) {
                 effects.push({
                     type: "predator_risk",
@@ -1204,7 +1204,7 @@ window.StoryEvents = (() => {
                 const speaker = participants[node.speaker];
 
                 dialogueLines.push(
-                    speaker ? `${speaker.name}: ${text}` : text
+                    speaker ? `${text}` : text
                 );
             }
 
