@@ -157,10 +157,11 @@ window.NPC = (() => {
                 ? game.pick(friends)
                 : game.pick(others);
 
-            let change = game.rand(1, 6);
+            const bond = game.relationship(cat, other);
+            let change = game.rand(1, 4);
 
             if (["gentle", "loyal", "playful"].includes(cat.personality)) {
-                change += 2;
+                change = Math.min(4, change + 1);
             }
 
             const difficultPersonalities = ["stubborn", "proud", "wary"];
@@ -210,11 +211,8 @@ window.NPC = (() => {
                 }
             }
 
-            game.setRelationship(
-                cat,
-                other,
-                game.relationship(cat, other) + change
-            );
+            const bondChange = change > 0 ? game.routineBondGain(bond, change) : change;
+            game.setRelationship(cat, other, bond + bondChange);
 
             // // Strong bonds can lead to becoming mates.
             // if (
@@ -244,38 +242,11 @@ window.NPC = (() => {
             //     });
             // }
 
-            // Sometimes develop a crush while socializing.
-            const attraction = other.sex === "male"
-                ? cat.attractionToMales
-                : cat.attractionToFemales;
-
-            const crushChance = 0.01 + (attraction / 100) * 0.19;
-
-            if (
-                game.canHaveCrush(cat, other) &&
-                !cat.relationships.crushes.includes(other.id) &&
-                (
-                    !cat.relationships.mates.length
-                        ? game.chance(crushChance)
-                        : game.isProneToOutsideCrushes(cat)
-                )
-            ) {
-                const hadCrush = cat.relationships.crushes.includes(other.id);
-
-                game.addCrush(cat, other);
-
-                if (!hadCrush && cat.relationships.crushes.includes(other.id)) {
-                    result = `${cat.name} has started developing feelings for ${other.name}.`;
-
-                    game.logEvent("romance", result);
-
-                    game.recordCatEvent("developed_crush", [cat, other], {
-                        importance: 3,
-                        description: result
-                    });
-
-                    game.showNotice(result);
-                }
+            if (change > 0) {
+                result = [game.tryDevelopCrush(cat, other), game.tryDevelopCrush(other, cat)]
+                    .filter(Boolean)
+                    .join(" ");
+                if (result) game.showNotice(result);
             }
 
             cat.energy = game.clamp(cat.energy - 3, 0, 100);
@@ -287,7 +258,8 @@ window.NPC = (() => {
                 if (gossip) {
                     result = gossip;
                 } else if (change > 0) {
-                    result = `${cat.name} spent time with ${other.name}. Their bond grew closer.`;
+                    result = `${cat.name} spent time with ${other.name}.`;
+                    if (bondChange > 0) result += " Their bond grew closer.";
                 } else {
                     result = `${cat.name} and ${other.name} had a small disagreement.`;
                 }

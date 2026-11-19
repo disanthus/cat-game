@@ -73,6 +73,7 @@ window.StoryEvents = (() => {
     // Minimum number of days before same event can happen again globally
     const EVENT_COOLDOWNS = {
         moonlit_confession: 20,
+        unexpected_feelings: 30,
         strange_footprints: 8,
         jealous_words: 5,
         abandoned_kit: 30,
@@ -92,6 +93,7 @@ window.StoryEvents = (() => {
             title: "Strange Footprints",
             category: "mystery",
             participantType: "footprints_patrol",
+            decisionMaker: "patrol1",
             description:
                 "A patrol discovers unfamiliar pawprints pressed into the mud near the territory border.",
 
@@ -303,6 +305,7 @@ window.StoryEvents = (() => {
 
             requiresCats: 2,
             participants: ["jealous_cat", "clanmate"],
+            decisionMaker: "jealous_cat",
             pairCooldown: 10,
 
             choices: [
@@ -338,6 +341,7 @@ window.StoryEvents = (() => {
             title: "A Cry in the Bracken",
             category: "clan_life",
             participants: ["patrol"],
+            decisionMaker: "patrol",
             participantRequirements: { patrol: { minAge: 6 } },
             description:
                 "A patrol hears a tiny cry from a patch of bracken. Inside lies a frightened kit, alone and shivering.",
@@ -378,6 +382,7 @@ window.StoryEvents = (() => {
 
             requiresCats: 2,
             participants: ["rescuer", "victim"],
+            decisionMaker: "rescuer",
             participantRequirements: {
                 rescuer: { minAge: 12 },
                 victim: { minAge: 6 }
@@ -427,6 +432,7 @@ window.StoryEvents = (() => {
 
             requiresCats: 2,
             participants: ["elder", "confidant"],
+            decisionMaker: "confidant",
             participantRequirements: { elder: { ranks: ["Elder"] } },
 
             choices: [
@@ -478,6 +484,7 @@ window.StoryEvents = (() => {
                 text: "{target} and {confessor} agree to spend more time together and see how their feelings develop.",
                 effects: [
                     { type: "relationship", value: 10 },
+                    { type: "refresh_crush", from: "confessor", to: "target" },
                     { type: "memory", value: "admirer_conversation", importance: 3 }
                 ]
             },
@@ -492,6 +499,181 @@ window.StoryEvents = (() => {
             }
         }
     });
+
+    events.push({
+        id: "unexpected_feelings",
+        title: "Unexpected Feelings",
+        description: "A cat with a mate finds themselves thinking about another clanmate.",
+        category: "romance",
+        participantType: "outside_crush_pair",
+        pairCooldown: 60,
+        dialogue: {
+            start: {
+                speaker: "admirer",
+                decisionMaker: "admirer",
+                text: "After sharing prey with {interest}, {admirer} catches themselves hoping they can do it again tomorrow. The thought catches them off guard. When did it start feeling like more than friendship?",
+                choices: [
+                    { text: "Privately acknowledge the crush", next: "acknowledge" },
+                    { text: "Ask to see them in secret", next: "private_offer", requiresReciprocalCrush: true },
+                    { text: "Let the feeling pass", next: "move_on" }
+                ]
+            },
+            private_offer: {
+                speaker: "admirer",
+                decisionMaker: "interest",
+                text: "“I want to spend more time with you,” {admirer} tells {interest}. “Could we keep this between us?”",
+                choices: [
+                    { text: "Agree to see each other in secret", next: "private_accept" },
+                    { text: "Turn down the offer", next: "acknowledge" }
+                ]
+            },
+            private_accept: {
+                speaker: "interest",
+                text: "{admirer} and {interest} agree to meet in secret.",
+                effects: [
+                    { type: "add_crush", from: "admirer", to: "interest" },
+                    { type: "secret_relationship" },
+                    { type: "memory", value: "secret_relationship", importance: 4 }
+                ]
+            },
+            acknowledge: {
+                speaker: "admirer",
+                text: "{admirer} admits to themselves that they have feelings for {interest} and keeps it private.",
+                effects: [
+                    { type: "add_crush", from: "admirer", to: "interest" },
+                    { type: "memory", value: "outside_crush", importance: 3 }
+                ]
+            },
+            move_on: {
+                speaker: "admirer",
+                text: "{admirer} decides to let the feeling pass."
+            }
+        }
+    });
+
+    const MATE_CONFLICT = {
+        id: "mate_conflict",
+        title: "Between Mates",
+        description: "Two mates have a difficult conversation about their future together.",
+        pairCooldown: 14
+    };
+
+    function findMateConflict(cats) {
+        const living = new Map(cats.map(cat => [cat.id, cat]));
+        let strained = null;
+        for (const challenger of cats) {
+            for (const mateId of challenger.relationships.mates) {
+                const partner = living.get(mateId);
+                if (!partner?.relationships.mates.includes(challenger.id) ||
+                    !canPairExperienceEvent(MATE_CONFLICT, challenger, partner)) continue;
+
+                const evidence = challenger.relationships.mateConcerns?.[mateId]?.pending;
+                if (evidence) {
+                    return buildMateConflict(challenger, partner, evidence, living.get(evidence.targetId)?.name);
+                }
+                const bond = game.relationship(challenger, partner);
+                if (bond <= 10 && (!strained || bond < strained.bond)) {
+                    strained = { challenger, partner, bond };
+                }
+            }
+        }
+        return strained ? buildMateConflict(strained.challenger, strained.partner) : null;
+    }
+
+    function buildMateConflict(challenger, partner, evidence, interestName) {
+        const dialogue = {};
+        const strongEvidence = evidence?.type === "relationship";
+        const interest = interestName || "another cat";
+        const subject = strongEvidence
+            ? `you've been seeing ${interest} in secret`
+            : `you have feelings for ${interest}`;
+
+        const decision = (speaker, decisionMaker, text, phase, choices, response) => ({
+            speaker, decisionMaker, text, choices, conflict: { phase, strongEvidence, response }
+        });
+        const choice = (text, next) => ({ text, next });
+
+        function addResolution(response, text) {
+            const stay = `${response}_stay`;
+            const leave = `${response}_leave`;
+            dialogue[response] = decision("challenger", "challenger", text, "stay", [
+                choice("Ask to work things out", `${response}_ask`),
+                choice("End the relationship", leave)
+            ], response);
+            dialogue[`${response}_ask`] = decision("challenger", "partner",
+                "“I'd like to try to fix this,” {challenger} says. “Do you still want us to be mates?”",
+                "stay", [choice("Try to stay together", stay), choice("End the relationship", leave)], response);
+
+            const believed = response === "believed";
+            const caught = response === "doubted";
+            const admitted = response === "admitted";
+            const effect = {
+                type: "resolve_mate_conflict",
+                trust: believed ? 3 : caught ? -18 : admitted ? (strongEvidence ? -10 : -4) : 6,
+                suspicion: believed ? 0 : caught ? 3 : 0,
+                endOutsideTie: admitted || caught,
+                interestId: evidence?.targetId
+            };
+            dialogue[stay] = {
+                speaker: "partner",
+                text: admitted || caught
+                    ? "{challenger} and {partner} decide to stay together. {partner} agrees to end the outside involvement."
+                    : "{challenger} and {partner} decide to stay together and give each other another chance.",
+                effects: [{ ...effect, bond: caught ? -5 : admitted ? 2 : 10 }]
+            };
+            dialogue[leave] = {
+                text: "{challenger} and {partner} part ways. They are no longer mates.",
+                effects: [{ ...effect, bond: -12, separate: true }]
+            };
+        }
+
+        if (evidence) {
+            dialogue.start = decision("challenger", "partner",
+                `“I heard ${subject},” {challenger} says to {partner}. “I want to hear the truth from you.”`,
+                "lie", [choice("Tell the truth", "admitted"), choice("Deny it", "denial")]);
+            dialogue.denial = decision("partner", "challenger",
+                "“There's nothing between us,” {partner} says. “You can believe me.”",
+                "believe", [choice("Believe the denial", "believed"), choice("Question the denial", "doubted")]);
+            addResolution("admitted", "“What you heard was true,” {partner} says after a long pause. “I'm sorry I kept it from you.”");
+            addResolution("believed", "{challenger} accepts {partner}'s explanation. They still need to decide what they want from each other.");
+            addResolution("doubted", "{challenger} finds the denial hard to believe. “If we're going to stay together, I need you to take this seriously.”");
+        } else {
+            addResolution("start", "“We barely speak anymore,” {challenger} tells {partner}. “Do you think there's anything left between us to save?”");
+        }
+        return { event: { ...MATE_CONFLICT, dialogue }, participants: { challenger, partner } };
+    }
+
+    function chooseMateConflictChoice(node, participants, choices) {
+        const { challenger, partner } = participants;
+        const { phase, strongEvidence, response } = node.conflict;
+        const cat = participants[node.decisionMaker];
+        const mate = cat === challenger ? partner : challenger;
+        const concern = game.mateConcern(cat, mate);
+        const trust = concern.trust ?? cat.trust ?? 50;
+        const suspicion = concern.suspicion;
+        const bond = game.relationship(cat, mate);
+        const loyalty = { loyal: 22, patient: 15, gentle: 12, helpful: 10, wary: -12, proud: -10, ambitious: -7 };
+        const evasiveness = { proud: 25, wary: 20, ambitious: 17, stubborn: 12, bold: -10, gentle: -13, loyal: -22 };
+        const skepticism = { wary: -20, observant: -15, stubborn: -10, patient: 8, gentle: 10, loyal: 8 };
+        let score;
+        if (phase === "lie") {
+            const partnerSuspicion = game.mateConcern(challenger, partner).suspicion;
+            score = 38 + (evasiveness[cat.personality] ?? 0) + bond * 0.12 +
+                (50 - trust) * 0.2 - partnerSuspicion * 4 - (strongEvidence ? 18 : 0);
+        } else if (phase === "believe") {
+            score = 53 + (skepticism[cat.personality] ?? 0) + (trust - 50) * 0.65 +
+                bond * 0.3 - suspicion * 12 - (strongEvidence ? 23 : 0);
+        } else {
+            const hurt = cat === challenger
+                ? (response === "doubted" ? 26 : response === "admitted" ? (strongEvidence ? 19 : 10) : 0)
+                : 0;
+            score = 47 + (loyalty[cat.personality] ?? 0) + (trust - 50) * 0.35 + bond * 0.65 -
+                (response === "believed" && cat === challenger ? 0 : suspicion * 5) - hurt;
+        }
+        const chance = Math.max(2, Math.min(98, score));
+        const succeeds = Math.random() * 100 < chance;
+        return choices[phase === "lie" ? Number(succeeds) : Number(!succeeds)];
+    }
 
     // Get or initialize persistent story history
     function getStoryHistory() {
@@ -700,6 +882,22 @@ window.StoryEvents = (() => {
             return patrol.length ? Object.fromEntries(patrol.map((cat, index) => [`patrol${index + 1}`, cat])) : null;
         }
 
+        if (event.participantType === "outside_crush_pair") {
+            const candidates = living.flatMap(admirer => {
+                if (admirer.age < 12) return [];
+                if (!living.some(cat => admirer.relationships?.mates?.includes(cat.id))) return [];
+
+                return living.filter(interest =>
+                    interest.age >= 12 &&
+                    game.canStartCrush(admirer, interest) &&
+                    (admirer.relationships[interest.id] ?? 0) >= 25 &&
+                    (interest.sex === "male" ? admirer.attractionToMales : admirer.attractionToFemales) > 0 &&
+                    canPairExperienceEvent(event, admirer, interest)
+                ).map(interest => ({ admirer, interest }));
+            });
+            return shuffle(candidates)[0] || null;
+        }
+
         if (event.participantType === "known_admirer_pair") {
             const candidates = living.flatMap(target => {
                 if (target.age < 12) return [];
@@ -818,6 +1016,7 @@ window.StoryEvents = (() => {
     // Determines npc dialogue choices
     function chooseNpcDialogueChoice(node, participants) {
         if (!node || !node.choices?.length) return null;
+        if (node.conflict) return chooseMateConflictChoice(node, participants, node.choices);
 
         const decisionMaker = participants[node.decisionMaker];
 
@@ -875,32 +1074,39 @@ window.StoryEvents = (() => {
         ];
     }
 
-    // add dialogue variation depending on speaker's personality
-    function getDialogueText(node, participants) {
-        function getParticipant(name) {
-            if (Array.isArray(participants)) {
-                const roles = {
-                    confessor: 0,
-                    target: 1,
-                    rescuer: 0,
-                    victim: 1,
-                    jealous_cat: 0,
-                    clanmate: 1
-                };
+    function availableChoices(node, participants) {
+        return (node.choices || []).filter(choice =>
+            !choice.requiresReciprocalCrush ||
+            participants.interest.relationships.crushes.includes(participants.admirer.id)
+        );
+    }
 
-                const index = roles[name] ?? Number(name);
+    function getParticipant(participants, name) {
+        if (Array.isArray(participants)) {
+            const roles = {
+                confessor: 0,
+                target: 1,
+                rescuer: 0,
+                victim: 1,
+                jealous_cat: 0,
+                clanmate: 1
+            };
 
-                return participants[index] || null;
-            }
+            const index = roles[name] ?? Number(name);
 
-            return participants?.[name] || null;
+            return participants[index] || null;
         }
 
+        return participants?.[name] || null;
+    }
+
+    // add dialogue variation depending on speaker's personality
+    function getDialogueText(node, participants) {
         const isString = typeof node === "string";
 
         const speaker = isString
             ? null
-            : getParticipant(node.speaker);
+            : getParticipant(participants, node.speaker);
 
         let text = isString ? node : node.text || "";
 
@@ -913,111 +1119,131 @@ window.StoryEvents = (() => {
         }
 
         return text.replace(/\{(\w+)\}/g, (match, name) => {
-            return getParticipant(name)?.name || match;
+            return getParticipant(participants, name)?.name || match;
         });
     }
 
-    // Display an event with branching dialogue
+    function showClanmateConversation(player, clanmate, onChoice) {
+        showStoryEvent({
+            title: "Time with a Clanmate",
+            dialogue: {
+                start: {
+                    speaker: "clanmate",
+                    decisionMaker: "player",
+                    text: "“Hey, {player}. Want to sit with me for a while? It’s quieter over here.”",
+                    choices: [
+                        { text: "Stay and chat", next: "stay" },
+                        { text: "Maybe later", next: "leave" }
+                    ]
+                },
+                stay: {
+                    speaker: "clanmate",
+                    text: "{player} and {clanmate} settle in a quiet corner of camp and trade stories.",
+                    spendTime: true
+                },
+                leave: {
+                    speaker: "clanmate",
+                    text: "“Another time, then.” {clanmate} flicks their tail in farewell."
+                }
+            }
+        }, { player, clanmate }, onChoice);
+    }
+
     function showStoryEvent(event, participants, onChoice) {
-        function completeEvent(result) {
-            console.log("PLAYER EVENT COMPLETED:", event.id);
-            console.log("Ending node:", result);
-
-            recordEventParticipants(event, participants);
-
-            const finalResult = {
-                ...result,
-                outcome: result.outcome || getDialogueText(result, participants)
-            };
-
-            console.log("Final outcome:", finalResult.outcome);
-
-            onChoice(finalResult, participants);
-        }
-
-        let modal = document.getElementById("storyEventModal");
-
-        if (!modal) {
-            modal = document.createElement("div");
-            modal.id = "storyEventModal";
-
-            modal.style.cssText = `
-            position: fixed;
-            inset: 0;
-            z-index: 10000;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-            background: rgba(20, 15, 25, 0.8);
-        `;
-
-            document.body.appendChild(modal);
-        }
+        const slot = game.eventSlot;
+        if (!slot.hidden) return;
 
         const panel = document.createElement("div");
-        panel.style.cssText = `
-        background: #fff8f0;
-        color: #302733;
-        width: 100%;
-        max-width: 480px;
-        padding: 24px;
-        border-radius: 14px;
-        box-sizing: border-box;
-    `;
+        panel.className = event.dialogue
+            ? "story-event-panel story-dialogue"
+            : "story-event-panel story-event";
+        const previousFocus = document.activeElement;
 
-        modal.innerHTML = "";
-        modal.appendChild(panel);
+        function clearEvent() {
+            if (slot.hidden) return;
+            slot.hidden = true;
+            panel.remove();
+            game.setEventActive(false);
+            const focusTarget = previousFocus !== document.body && previousFocus?.getClientRects().length
+                ? previousFocus
+                : document.querySelector(".tabs .active");
+            focusTarget?.focus();
+        }
 
-        // Support both named participants and old participant arrays
-        function getParticipant(name) {
-            if (!Array.isArray(participants)) {
-                return participants[name] || null;
+        function completeEvent(result) {
+            clearEvent();
+            recordEventParticipants(event, participants);
+            onChoice({
+                ...result,
+                outcome: result.outcome || getDialogueText(result, participants)
+            }, participants);
+        }
+
+        function showPanel(text, speaker) {
+            panel.replaceChildren();
+
+            if (speaker && game?.renderPortrait) {
+                const portrait = document.createElement("canvas");
+                portrait.className = "story-dialogue-portrait";
+                portrait.setAttribute("aria-hidden", "true");
+                panel.appendChild(portrait);
+                game.renderPortrait(portrait, speaker);
             }
 
-            return participants[Number(name)] || null;
+            const card = document.createElement("div");
+            card.className = "story-event-card";
+
+            const nameplate = document.createElement("h2");
+            nameplate.id = "storyEventSpeaker";
+            nameplate.textContent = speaker?.name || event.title;
+            nameplate.tabIndex = -1;
+            nameplate.setAttribute("aria-describedby", "storyEventText");
+
+            const description = document.createElement("p");
+            description.id = "storyEventText";
+            description.textContent = text;
+
+            card.append(nameplate, description);
+            panel.appendChild(card);
+
+            const actions = document.createElement("div");
+            actions.className = "story-event-actions";
+            panel.appendChild(actions);
+            return actions;
         }
 
-        // Replace character placeholders with actual names
-        function formatText(text) {
-            return text.replace(/\{(\w+)\}/g, (match, name) => {
-                return getParticipant(name)?.name || match;
-            });
+        function addChoice(actions, label, onClick) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.textContent = label;
+            button.addEventListener("click", onClick);
+            actions.appendChild(button);
         }
 
-        // Show a dialogue node
+        function playerMakesDecision(role) {
+            const cat = getParticipant(participants, role);
+            return Boolean(cat && cat.id === game.getState().playerCatId);
+        }
+
         function showNode(nodeId) {
             const node = event.dialogue[nodeId];
 
             if (!node) {
                 console.error("Missing dialogue node:", nodeId);
-                modal.remove();
+                clearEvent();
                 return;
             }
 
-            panel.innerHTML = "";
+            const actions = showPanel(getDialogueText(node, participants), getParticipant(participants, node.speaker));
+            const choices = availableChoices(node, participants);
 
-            if (node.speaker) {
-                const speaker = getParticipant(node.speaker);
-
-                const speakerName = document.createElement("h3");
-                speakerName.textContent = speaker?.name || node.speaker;
-                panel.appendChild(speakerName);
+            function advance(choice) {
+                if (choice.next) {
+                    showNode(choice.next);
+                } else {
+                    completeEvent(choice);
+                }
             }
-            console.log("Participants:", participants);
-            console.log("Confessor:", participants.confessor);
-            console.log("Target:", participants.target);
-            console.log("Resolved text:", getDialogueText(node, participants));
-            const dialogue = document.createElement("p");
-            dialogue.textContent = getDialogueText(node, participants);
-            panel.appendChild(dialogue);
-            const decisionMaker = node.decisionMaker;
-            const decisionCat = decisionMaker
-                ? getParticipant(decisionMaker)
-                : null;
-
-            const playerMakesDecision =
-                decisionCat?.id === game?.getState()?.playerCatId;
 
             // helper to decide if npc confesses or not
             function shouldNpcConfess(confessor, target) {
@@ -1034,6 +1260,8 @@ window.StoryEvents = (() => {
             }
 
             function chooseNpcChoice() {
+                if (node.conflict) return chooseMateConflictChoice(node, participants, choices);
+
                 // The confessor decides whether to confess
                 if (
                     event.participantType === "confession_pair" &&
@@ -1044,7 +1272,7 @@ window.StoryEvents = (() => {
 
                     const willConfess = shouldNpcConfess(confessor, target);
 
-                    return node.choices.find(
+                    return choices.find(
                         choice => choice.next === (
                             willConfess ? "confession" : "secret"
                         )
@@ -1065,119 +1293,54 @@ window.StoryEvents = (() => {
 
                     const desiredNext = targetHasCrush ? "accept" : "reject";
 
-                    return node.choices.find(
+                    return choices.find(
                         choice => choice.next === desiredNext
                     );
                 }
                 // Otherwise, let the NPC randomly choose
-                return node.choices[
-                    Math.floor(Math.random() * node.choices.length)
+                return choices[
+                    Math.floor(Math.random() * choices.length)
                 ];
             }
 
-            if (playerMakesDecision || !decisionMaker) {
-
-                // The player gets to make this decision.
-                (node.choices || []).forEach(choice => {
-                    const button = document.createElement("button");
-                    button.type = "button";
-                    button.textContent = choice.text;
-
-                    button.style.cssText = `
-                    display: block;
-                    width: 100%;
-                    padding: 12px;
-                    margin-top: 10px;
-                    border: 1px solid #b9a5bd;
-                    border-radius: 8px;
-                     background: #eaddec;
-                    color: #302733;
-                    cursor: pointer;
-                    font: inherit;
-                    text-align: left;
-                    `;
-
-                    button.addEventListener("click", () => {
-                        if (choice.next) {
-                            showNode(choice.next);
-                        } else {
-                            modal.remove();
-                            completeEvent(choice, participants);
-                        }
-                    });
-
-                    panel.appendChild(button);
+            if (!choices.length) {
+                addChoice(actions, "Continue", () => completeEvent(node));
+            } else if (playerMakesDecision(node.decisionMaker)) {
+                choices.forEach(choice => {
+                    addChoice(actions, choice.text, () => advance(choice));
                 });
-
             } else {
+                addChoice(actions, "Next", () => advance(chooseNpcChoice() || choices[0]));
+            }
 
-                // The NPC makes the decision when the player presses Next.
-                const button = document.createElement("button");
-                button.type = "button";
-                button.textContent = "Next";
-
-                button.addEventListener("click", () => {
-                    const choice = chooseNpcChoice();
-
-                    if (!choice) return;
-
-                    if (choice.next) {
-                        showNode(choice.next);
-                    } else {
-                        modal.remove();
-                        completeEvent(choice);
-                    }
-                });
-
-                panel.appendChild(button);
-            };
-
-            // Ending node: apply its effects
-            if (!node.choices || node.choices.length === 0) {
-                const button = document.createElement("button");
-                button.type = "button";
-                button.textContent = "Continue";
-
-                button.addEventListener("click", () => {
-                    modal.remove();
-                    completeEvent(node);
-                });
-
-                panel.appendChild(button);
+            if (!slot.hidden) {
+                panel.querySelector("h2").focus();
             }
         }
 
-        // Old events still use their original flat choices
-        if (!event.dialogue) {
-            const title = document.createElement("h2");
-            title.textContent = event.title;
-
-            const description = document.createElement("p");
-            description.textContent = event.description;
-
-            panel.append(title, description);
-
-            event.choices.forEach(choice => {
-                const button = document.createElement("button");
-                button.type = "button";
-                button.textContent = choice.text;
-
-                button.addEventListener("click", () => {
-                    modal.remove();
+        if (event.dialogue) {
+            showNode("start");
+        } else {
+            const actions = showPanel(event.description);
+            if (playerMakesDecision(event.decisionMaker)) {
+                event.choices.forEach(choice => {
+                    addChoice(actions, choice.text, () => completeEvent(choice));
+                });
+            } else {
+                addChoice(actions, "Continue", () => {
+                    const choice = event.choices[Math.floor(Math.random() * event.choices.length)];
                     completeEvent(choice);
                 });
-
-                panel.appendChild(button);
-            });
-
-            return;
+            }
         }
 
-        const title = document.createElement("h2");
-        title.textContent = event.title;
-        panel.appendChild(title);
-
-        showNode("start");
+        if (panel.childElementCount) {
+            slot.appendChild(panel);
+            slot.hidden = false;
+            game.setEventActive(true);
+            panel.querySelector("h2").focus({ preventScroll: true });
+            slot.scrollIntoView({ block: "nearest" });
+        }
     }
 
     function runNpcDialogue(event, participants, onComplete) {
@@ -1209,7 +1372,8 @@ window.StoryEvents = (() => {
             }
 
             // We've reached the ending. Apply its effects and finish.
-            if (!node.choices || node.choices.length === 0) {
+            const choices = availableChoices(node, participants);
+            if (!choices.length) {
                 recordEventParticipants(event, participants);
 
                 onComplete({
@@ -1221,7 +1385,7 @@ window.StoryEvents = (() => {
             }
 
             // Choose the next dialogue branch.
-            const choice = chooseNpcDialogueChoice(node, participants);
+            const choice = chooseNpcDialogueChoice({ ...node, choices }, participants);
 
             if (!choice) {
                 console.error("NPC could not choose a dialogue option:", nodeId);
@@ -1259,6 +1423,8 @@ window.StoryEvents = (() => {
         selectParticipants,
         involvesPlayer,
         showStoryEvent,
+        showClanmateConversation,
+        findMateConflict,
         runNpcDialogue,
 
         // Cooldown and history helpers

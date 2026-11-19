@@ -26,6 +26,103 @@ body {
   font-family: "Nunito", system-ui, sans-serif;
 }
 
+#questCard:not([hidden]) {
+  margin-bottom: 16px;
+  color: var(--ink);
+}
+
+.story-event-panel {
+  max-width: 540px;
+  margin-inline: auto;
+}
+
+.story-event {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 24px;
+}
+
+.story-event-card h2,
+.story-event-card p {
+  margin: 0;
+}
+
+.story-event-card p {
+  line-height: 1.55;
+}
+
+.story-event .story-event-card p {
+  margin-top: 8px;
+}
+
+.story-event-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
+.story-event .story-event-actions {
+  margin-top: 16px;
+}
+
+.story-event-actions button {
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 5px;
+  background: var(--muted);
+  color: var(--sage);
+  font-weight: 800;
+}
+
+.story-event-actions button:hover {
+  background: var(--forest);
+}
+
+.story-dialogue {
+  padding: 20px 4px 4px;
+}
+
+.story-dialogue-portrait {
+  display: block;
+  width: min(45%, 200px);
+  aspect-ratio: 10 / 9;
+  margin: 0 4px 0 auto;
+}
+
+.story-dialogue .story-event-card {
+  position: relative;
+  padding: 0 clamp(14px, 4vw, 24px) 27px;
+  border: 3px dotted var(--ink);
+  border-radius: 10px;
+  background: var(--paper);
+}
+
+.story-dialogue .story-event-card h2 {
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  margin-top: -18px;
+  margin-bottom: 12px;
+  padding: 7px 16px;
+  border-radius: 5px;
+  background: var(--muted);
+  color: var(--sage);
+  font-size: 1rem;
+}
+
+.story-dialogue .story-event-actions {
+  position: relative;
+  margin: -10px 14px 0;
+}
+
+.story-dialogue .story-event-actions button {
+  flex: 1 1 128px;
+  max-width: 215px;
+}
+
 button,
 select,
 input {

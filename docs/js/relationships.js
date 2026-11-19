@@ -2,12 +2,10 @@
 
 window.Relationships = (() => {
     let clamp;
-    let shareCrushOnSameCat;
     let recordCatEvent;
 
     function initialize(dependencies) {
         clamp = dependencies.clamp;
-        shareCrushOnSameCat = dependencies.shareCrushOnSameCat;
         recordCatEvent = dependencies.recordCatEvent;
     }
 
@@ -81,6 +79,12 @@ window.Relationships = (() => {
         return "rivals";
     }
 
+    function routineBondGain(bond, gain) {
+        if (bond >= 85) return Math.min(1, Math.floor(gain / 4));
+        if (bond >= 60) return Math.min(2, Math.floor(gain / 2));
+        return gain;
+    }
+
     // Check whether two cats are best friends.
     function areBestFriends(a, b) {
         return relationship(a, b) >= 85 &&
@@ -147,14 +151,7 @@ window.Relationships = (() => {
             b.relationships.rivals = [];
         }
 
-        const crushRivalsA = a.relationships.crushRivals || [];
-        const crushRivalsB = b.relationships.crushRivals || [];
-
-        const hasCrushRivalry =
-            crushRivalsA.includes(b.id) ||
-            crushRivalsB.includes(a.id);
-
-        const rivals = areRivals(a, b) || hasCrushRivalry;
+        const rivals = areRivals(a, b);
 
         if (rivals) {
             if (!a.relationships.rivals.includes(b.id)) {
@@ -179,16 +176,9 @@ window.Relationships = (() => {
             return false;
         }
 
-        if (!shareCrushOnSameCat(a, b)) {
+        if (!a.relationships.crushes.includes(sharedCrush.id) ||
+            !b.relationships.crushes.includes(sharedCrush.id)) {
             return false;
-        }
-
-        if (!Array.isArray(a.relationships.rivals)) {
-            a.relationships.rivals = [];
-        }
-
-        if (!Array.isArray(b.relationships.rivals)) {
-            b.relationships.rivals = [];
         }
 
         if (!Array.isArray(a.relationships.crushRivals)) {
@@ -200,9 +190,13 @@ window.Relationships = (() => {
         }
 
         // Check whether this pair's crush rivalry was already recorded.
-        const alreadyRecorded =
-            a.relationships.crushRivals.includes(b.id) &&
-            b.relationships.crushRivals.includes(a.id);
+        const aTargets = a.relationships.crushRivalTargets ??= {};
+        const bTargets = b.relationships.crushRivalTargets ??= {};
+        const aShared = aTargets[b.id] ??= [];
+        const bShared = bTargets[a.id] ??= [];
+        const alreadyRecorded = aShared.includes(sharedCrush.id) && bShared.includes(sharedCrush.id);
+        if (!aShared.includes(sharedCrush.id)) aShared.push(sharedCrush.id);
+        if (!bShared.includes(sharedCrush.id)) bShared.push(sharedCrush.id);
 
         // Remember that these cats have already discovered this shared crush.
         if (!Array.isArray(a.relationships.knownCrushes)) {
@@ -219,15 +213,6 @@ window.Relationships = (() => {
 
         if (!b.relationships.knownCrushes.includes(sharedCrush.id)) {
             b.relationships.knownCrushes.push(sharedCrush.id);
-        }
-
-        // Ensure the rivalry is mutual.
-        if (!a.relationships.rivals.includes(b.id)) {
-            a.relationships.rivals.push(b.id);
-        }
-
-        if (!b.relationships.rivals.includes(a.id)) {
-            b.relationships.rivals.push(a.id);
         }
 
         // Remember the reason for the rivalry.
@@ -275,6 +260,7 @@ window.Relationships = (() => {
         initialize,
         relationship,
         relationshipLabel,
+        routineBondGain,
         areBestFriends,
         areRivals,
         updateBestFriendship,

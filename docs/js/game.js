@@ -5,19 +5,11 @@
     "use strict";
 
     const SAVE_KEY = "winterclan-save-v1";
-    const catSuspicion = new Map();
     let NAMES = {};
 
-    // Suspicion
-    function addSuspicion(cat, amount = 1) {
-        if (!cat) return 0;
-
-        const current = catSuspicion.get(cat.id) || 0;
-        const updated = clamp(current + amount, 0, 5);
-
-        catSuspicion.set(cat.id, updated);
-
-        return updated;
+    function mateConcern(cat, mate) {
+        const concerns = cat.relationships.mateConcerns ??= {};
+        return concerns[mate.id] ??= { suspicion: 0, heard: {} };
     }
 
     // Load naming data from the JSON file.
@@ -59,10 +51,8 @@
             recordCatEvent,
             logEvent,
             showNotice,
-            canHaveCrush,
-            isProneToOutsideCrushes,
-            addCrush,
-            addSuspicion,
+            routineBondGain: window.Relationships.routineBondGain,
+            tryDevelopCrush,
             updateBestFriendship,
             updateRivalry,
             seasonName,
@@ -82,7 +72,6 @@
 
         window.Relationships.initialize({
             clamp,
-            shareCrushOnSameCat,
             recordCatEvent
         });
 
@@ -97,7 +86,18 @@
         }
 
         window.StoryEvents.initialize({
-            getState: () => state
+            getState: () => state,
+            canStartCrush,
+            relationship,
+            mateConcern,
+            renderPortrait: renderCatPortrait,
+            eventSlot: $("questCard"),
+            setEventActive(active) {
+                if (active) switchView("territory");
+
+                document.querySelectorAll(".top-status, .tabs, #territoryGrid, .patrol-panel, .footer-actions")
+                    .forEach(section => { section.inert = active; });
+            }
         });
 
         return true;
@@ -313,7 +313,10 @@
                 const cat = cats.find(participant => participant.id === effect.catId);
                 if (cat) {
                     cat.health = clamp(cat.health + effect.value, 0, 100);
-                    if (cat.health === 0) cat.alive = false;
+                    if (cat.health === 0) {
+                        cat.alive = false;
+                        updateCrushEligibility();
+                    }
                 }
             }
 
@@ -379,11 +382,11 @@
 
             // Add a crush
             if (effect.type === "add_crush") {
-                const confessor = cats.find(
+                const confessor = participants[effect.from] || cats.find(
                     cat => cat.id === effect.from
                 ) || cats[0];
 
-                const target = cats.find(
+                const target = participants[effect.to] || cats.find(
                     cat => cat.id === effect.to
                 ) || cats[1];
 
@@ -396,8 +399,52 @@
                 const admirer = participants[effect.from];
                 const target = participants[effect.to];
                 if (admirer && target) {
-                    admirer.relationships.crushes = admirer.relationships.crushes.filter(id => id !== target.id);
+                    clearCrush(admirer, target);
                 }
+            }
+
+            if (effect.type === "refresh_crush") {
+                const admirer = participants[effect.from];
+                const target = participants[effect.to];
+                if (admirer && target && admirer.relationships.crushes.includes(target.id)) {
+                    admirer.relationships.crushStartDays[target.id] = state.day;
+                }
+            }
+
+            if (effect.type === "secret_relationship") {
+                const { admirer, interest } = participants;
+                if (admirer?.alive && interest?.alive &&
+                    !areCloseRelatives(admirer, interest) &&
+                    admirer.relationships.crushes.includes(interest.id) &&
+                    interest.relationships.crushes.includes(admirer.id)) {
+                    (admirer.relationships.secretPartners ??= {})[interest.id] = state.day;
+                    (interest.relationships.secretPartners ??= {})[admirer.id] = state.day;
+                }
+            }
+
+            if (effect.type === "resolve_mate_conflict") {
+                const { challenger, partner } = participants;
+                if (!challenger.relationships.mates.includes(partner.id) ||
+                    !partner.relationships.mates.includes(challenger.id)) continue;
+
+                const concern = mateConcern(challenger, partner);
+                concern.pending = null;
+                concern.trust = clamp((concern.trust ?? challenger.trust ?? 50) + effect.trust, 0, 100);
+                concern.suspicion = effect.suspicion;
+                setRelationship(challenger, partner, relationship(challenger, partner) + effect.bond);
+
+                if (effect.separate) {
+                    challenger.relationships.mates = challenger.relationships.mates.filter(id => id !== partner.id);
+                    partner.relationships.mates = partner.relationships.mates.filter(id => id !== challenger.id);
+                    mateConcern(partner, challenger).pending = null;
+                } else if (effect.endOutsideTie) {
+                    clearOutsideTie(partner, effect.interestId);
+                }
+
+                recordCatEvent(effect.separate ? "mates_separated" : "mates_reconciled", [challenger, partner], {
+                    importance: effect.separate ? 5 : 4,
+                    description: window.StoryEvents.formatText(choice.text, participants)
+                });
             }
 
             // Become mates
@@ -409,6 +456,7 @@
                     console.warn("Could not find cats for become_mates effect:", effect);
                     continue;
                 }
+                if (areCloseRelatives(first, second)) continue;
 
                 if (!first.relationships) first.relationships = {};
                 if (!second.relationships) second.relationships = {};
@@ -439,11 +487,8 @@
                 }
 
                 // Clear their crushes on each other.
-                first.relationships.crushes =
-                    first.relationships.crushes.filter(id => id !== second.id);
-
-                second.relationships.crushes =
-                    second.relationships.crushes.filter(id => id !== first.id);
+                clearOutsideTie(first, second.id);
+                clearCrush(second, first);
 
                 recordCatEvent("became_mates", [first, second], {
                     importance: 5,
@@ -1258,6 +1303,16 @@
             }`;
     }
 
+    function renderCatPortrait(canvas, cat) {
+        CatRenderer.renderIcon(canvas, {
+            ...phenotype(cat.genes),
+            coatShade: cat.coatShade,
+            whiteMarking: cat.whiteMarking,
+            eyeColor: cat.eyeColor,
+            rightEyeColor: cat.rightEyeColor
+        }, { artwork: getCatArtwork(cat) });
+    }
+
     function renderRoster() {
         const filter = $("rankFilter").value;
 
@@ -1301,9 +1356,7 @@
             const artwork = getCatArtwork(c);
 
             if (faceCanvas) {
-                CatRenderer.renderIcon(faceCanvas, traits, {
-                    artwork
-                });
+                renderCatPortrait(faceCanvas, c);
             }
 
             if (fullCanvas) {
@@ -1321,12 +1374,16 @@
             .map(id => getCat(id) || state.cats.find(x => x.id === id))
             .filter(Boolean);
 
-        const rels = Object.entries(c.relationships)
+        const bonds = Object.entries(c.relationships)
             .filter(([id, val]) => typeof val === "number")
             .map(([id, val]) => ({ cat: getCat(id), val }))
             .filter(x => x.cat)
-            .sort((a, b) => b.val - a.val)
-            .slice(0, 4);
+            .sort((a, b) => b.val - a.val);
+        const rels = bonds.slice(0, 4);
+        const weakest = bonds.at(-1);
+        if (weakest?.val <= -20 && !rels.includes(weakest)) {
+            rels[3] = weakest;
+        }
 
         const feelings = Object.entries(c.relationships.jealousyAdmiration || {})
             .map(([id, val]) => ({
@@ -1548,6 +1605,17 @@
           </div>`
                 ).join("")
             || `<p class="muted">No rivals yet.</p>`}
+    </div>
+    <div class="profile-section">
+      <h4>Romantic Rivals</h4>
+      ${(c.relationships.crushRivals || [])
+                .map(id => getCat(id))
+                .filter(Boolean)
+                .map(rival => `<div class="gene-line">
+            <span>${escapeHtml(rival.name)}</span>
+            <span>Romantic rival</span>
+          </div>`).join("")
+            || `<p class="muted">No romantic rivals yet.</p>`}
     </div>`;
     }
 
@@ -1608,6 +1676,7 @@
             a.id !== b.id &&
             a.alive &&
             b.alive &&
+            !areCloseRelatives(a, b) &&
             (
                 a.age >= 12 && b.age >= 12 ||
                 a.age >= 6 && a.age < 12 && a.rank === "Apprentice" &&
@@ -1618,7 +1687,7 @@
 
     function canKeepCrush(a, b) {
         if (canHaveCrush(a, b)) return true;
-        if (!a || !b || a.id === b.id || !a.alive || !b.alive) return false;
+        if (!a || !b || a.id === b.id || !a.alive || !b.alive || areCloseRelatives(a, b)) return false;
 
         const younger = a.age < b.age ? a : b;
         const older = younger === a ? b : a;
@@ -1626,12 +1695,79 @@
             older.age >= 12 && older.age - younger.age <= 3;
     }
 
+    const CRUSH_DURATION = 20;
+    const MULTIPLE_CRUSH_PERSONALITIES = ["bold", "curious", "playful"];
+
+    function crushLimit(cat) {
+        return MULTIPLE_CRUSH_PERSONALITIES.includes(cat.personality) ? 2 : 1;
+    }
+
+    function canStartCrush(cat, target) {
+        return canHaveCrush(cat, target) &&
+            !cat.relationships.mates.includes(target.id) &&
+            !cat.relationships.crushes.includes(target.id) &&
+            cat.relationships.crushes.length < crushLimit(cat);
+    }
+
     function updateCrushEligibility() {
-        for (const cat of livingCats()) {
-            cat.relationships.crushes = cat.relationships.crushes.filter(id =>
-                canKeepCrush(cat, getCat(id))
-            );
+        const cats = livingCats();
+        for (const cat of cats) {
+            const rels = cat.relationships;
+            const startDays = rels.crushStartDays || {};
+            const validCrushes = [...new Set(rels.crushes)]
+                .map(getCat)
+                .filter(target => canKeepCrush(cat, target) && !rels.mates.includes(target.id))
+                .filter(target => state.day - (startDays[target.id] ?? state.day) < CRUSH_DURATION)
+                .sort((a, b) => relationship(cat, b) - relationship(cat, a))
+                .slice(0, crushLimit(cat));
+            rels.crushes = validCrushes.map(target => target.id);
+            rels.crushStartDays = Object.fromEntries(rels.crushes.map(id => [id, startDays[id] ?? state.day]));
+
+            for (const id of Object.keys(rels.secretPartners || {})) {
+                const target = getCat(id);
+                if (target && areCloseRelatives(cat, target)) delete rels.secretPartners[id];
+            }
+            for (const [id, concern] of Object.entries(rels.mateConcerns || {})) {
+                if (!concern.pending) continue;
+                const mate = getCat(id);
+                const target = state.cats.find(candidate => candidate.id === concern.pending.targetId);
+                if (mate && target && areCloseRelatives(mate, target)) concern.pending = null;
+            }
         }
+        updateCrushRivalries(cats);
+    }
+
+    function updateCrushRivalries(cats) {
+        for (const cat of cats) {
+            const rels = cat.relationships;
+            const activeTargets = {};
+            for (const id of rels.crushRivals || []) {
+                const rival = getCat(id);
+                if (!rival) continue;
+                const targets = (rels.crushRivalTargets?.[id] ?? rels.crushes)
+                    .filter(targetId => rels.crushes.includes(targetId) &&
+                        rival.relationships.crushes.includes(targetId));
+                if (targets.length) activeTargets[id] = targets;
+            }
+            rels.crushRivalTargets = activeTargets;
+            rels.crushRivals = Object.keys(activeTargets);
+        }
+    }
+
+    function clearCrush(cat, target) {
+        const rels = cat.relationships;
+        if (!rels.crushes.includes(target.id)) return;
+        rels.crushes = rels.crushes.filter(id => id !== target.id);
+        if (rels.crushStartDays) delete rels.crushStartDays[target.id];
+
+        updateCrushRivalries(livingCats());
+    }
+
+    function clearOutsideTie(cat, targetId) {
+        const target = getCat(targetId);
+        if (target) clearCrush(cat, target);
+        if (cat.relationships.secretPartners) delete cat.relationships.secretPartners[targetId];
+        if (target?.relationships.secretPartners) delete target.relationships.secretPartners[cat.id];
     }
 
     function canBecomeMates(a, b) {
@@ -1663,35 +1799,30 @@
         );
     }
 
-    function isProneToOutsideCrushes(cat) {
-        const tendencies = {
-            loyal: 0.02,
-            helpful: 0.03,
-            gentle: 0.05,
-            patient: 0.05,
-            observant: 0.15,
-            curious: 0.20,
-            playful: 0.25,
-            bold: 0.30,
-            proud: 0.35,
-            stubborn: 0.30,
-            ambitious: 0.25,
-            wary: 0.05
-        };
-
-        return chance(tendencies[cat.personality] ?? 0.10);
+    function addCrush(a, b) {
+        if (!canStartCrush(a, b)) return false;
+        a.relationships.crushes.push(b.id);
+        a.relationships.crushStartDays ??= {};
+        a.relationships.crushStartDays[b.id] = state.day;
+        return true;
     }
 
-    function addCrush(a, b) {
-        if (!canHaveCrush(a, b)) return;
-
-        if (!Array.isArray(a.relationships.crushes)) {
-            a.relationships.crushes = [];
+    function tryDevelopCrush(cat, other) {
+        const attraction = other.sex === "male" ? cat.attractionToMales : cat.attractionToFemales;
+        const crushChance = 0.02 + (attraction / 100) * 0.03;
+        if (!canStartCrush(cat, other) || attraction <= 0 || relationship(cat, other) < 25 ||
+            cat.relationships.mates.length ||
+            !chance(crushChance) || !addCrush(cat, other)) {
+            return "";
         }
 
-        if (!a.relationships.crushes.includes(b.id)) {
-            a.relationships.crushes.push(b.id);
-        }
+        const text = `${cat.name} has started developing feelings for ${other.name}.`;
+        logEvent("romance", text);
+        recordCatEvent("developed_crush", [cat, other], {
+            importance: 3,
+            description: text
+        });
+        return text;
     }
 
     function updateBestFriendship(a, b) {
@@ -1936,11 +2067,8 @@
         }
 
         // Clear crushes between these two cats.
-        a.relationships.crushes =
-            a.relationships.crushes.filter(id => id !== b.id);
-
-        b.relationships.crushes =
-            b.relationships.crushes.filter(id => id !== a.id);
+        clearOutsideTie(a, b.id);
+        clearCrush(b, a);
 
         const litterSize = rand(1, 3);
         const kits = [];
@@ -2176,17 +2304,24 @@
         if (!others.length) return;
 
         const other = pick(others);
-        const change = rand(7, 15);
+        StoryEvents.showClanmateConversation(c, other, choice => {
+            let text = choice.outcome;
+            if (choice.spendTime) {
+                const bond = relationship(c, other);
+                const gain = window.Relationships.routineBondGain(bond, rand(3, 6));
+                setRelationship(c, other, bond + gain);
+                c.energy = clamp(c.energy - 4, 0, 100);
+                text += ` Their bond is now ${relationshipLabel(relationship(c, other))}.`;
+                const newCrushes = [tryDevelopCrush(c, other), tryDevelopCrush(other, c)].filter(Boolean);
+                if (newCrushes.length) text += ` ${newCrushes.join(" ")}`;
+            }
 
-        setRelationship(c, other, relationship(c, other) + change);
-        c.energy = clamp(c.energy - 4, 0, 100);
-
-        const text = `${c.name} spent a little time with ${other.name}. Their bond is now ${relationshipLabel(relationship(c, other))}.`;
-
-        c.notes.push(text);
-        logEvent("relationship", text);
-        showNotice(text);
-        render();
+            c.notes.push(text);
+            logEvent("relationship", text);
+            saveGame(false);
+            render();
+            showNotice(text);
+        });
     }
 
     function restPlayer() {
@@ -2379,6 +2514,22 @@
         }
     }
 
+    function learnAboutOutsideTie(mate, partner, lead) {
+        if (!mate.relationships.mates.includes(partner.id) ||
+            !partner.relationships.mates.includes(mate.id) ||
+            partner.relationships.mates.includes(lead.id)) return false;
+
+        const concern = mateConcern(mate, partner);
+        const key = `${lead.type}:${lead.id}`;
+        if (concern.heard[key] === lead.day) return false;
+        if (concern.pending && (concern.pending.type === "relationship" || lead.type === "crush")) return false;
+
+        concern.heard[key] = lead.day;
+        concern.suspicion = clamp(concern.suspicion + (lead.type === "relationship" ? 3 : 2), 0, 5);
+        concern.pending = { type: lead.type, targetId: lead.id };
+        return true;
+    }
+
     function tryGenerateGossip(cat, other) {
         const thirdCats = livingCats().filter(candidate =>
             candidate.id !== cat.id &&
@@ -2400,46 +2551,31 @@
 
         const subject = pick(thirdCats);
 
-        // Checks to see if a cat has a mate and a suspected crush
-        const hasMate = Array.isArray(subject.relationships?.mates)
-            && subject.relationships.mates.some(id =>
-                livingCats().some(candidate => candidate.id === id)
-            );
+        const listeningMates = [cat, other].filter(listener =>
+            subject.relationships.mates.includes(listener.id) &&
+            listener.relationships.mates.includes(subject.id)
+        );
+        for (const mate of listeningMates) {
+            const concern = mateConcern(mate, subject);
+            const secretPartners = subject.relationships.secretPartners || {};
+            const leads = [
+                ...Object.entries(secretPartners).map(([id, day]) => ({ id, day, type: "relationship" })),
+                ...subject.relationships.crushes.filter(id => !(id in secretPartners)).map(id => ({
+                    id, day: subject.relationships.crushStartDays?.[id] ?? 0, type: "crush"
+                }))
+            ].filter(lead => {
+                return getCat(lead.id) && !subject.relationships.mates.includes(lead.id) &&
+                    concern.heard[`${lead.type}:${lead.id}`] !== lead.day;
+            });
 
-        const outsideCrushes = (subject.relationships?.crushes || [])
-            .filter(id =>
-                id !== cat.id &&
-                !(subject.relationships?.mates || []).includes(id) &&
-                livingCats().some(candidate => candidate.id === id) &&
-                hasMate
-            );
-
-        if (outsideCrushes.length > 0 && chance(0.60)) {
-            const crush = livingCats().find(candidate =>
-                candidate.id === pick(outsideCrushes)
-            );
-
-            if (crush) {
-                const subjectMates = (subject.relationships?.mates || [])
-                    .map(id => livingCats().find(candidate => candidate.id === id))
-                    .filter(Boolean);
-
-                const mate = subjectMates.find(candidate =>
-                    candidate.id === cat.id || candidate.id === other.id
-                );
-
-                if (mate) {
-                    const suspicion = addSuspicion(mate, 1);
-
-                    if (suspicion >= 3) {
-                        return `${mate.name} is becoming increasingly suspicious of ${subject.name}'s feelings for ${crush.name}.`;
-                    }
-
-                    return `${cat.name} suspects ${subject.name} has feelings for ${crush.name}, despite already having a mate.`;
-                }
+            const lead = leads[0];
+            if (lead && chance(0.60) && learnAboutOutsideTie(mate, subject, lead)) {
+                const target = getCat(lead.id);
+                const news = lead.type === "relationship"
+                    ? `has been seeing ${target.name} in secret`
+                    : `may have feelings for ${target.name}`;
+                return `${mate.name} hears that ${subject.name} ${news}.`;
             }
-
-            return `${cat.name} suspects ${subject.name} has feelings for someone outside their relationship.`;
         }
 
         const hasCrushes = Array.isArray(subject.relationships?.crushes) && subject.relationships.crushes.some(id =>
@@ -2483,6 +2619,12 @@
 
                         if (gossip && window.Gossip.recordGossip(listener, gossip)) {
                             window.SocialReactions.reactToGossip(listener, gossip);
+                            const secretDay = subject.relationships.secretPartners?.[crush.id];
+                            learnAboutOutsideTie(listener, subject, {
+                                id: crush.id,
+                                day: secretDay ?? subject.relationships.crushStartDays?.[crush.id] ?? 0,
+                                type: secretDay === undefined ? "crush" : "relationship"
+                            });
                         }
 
                         // Shared feelings only cause rivalry when discovered.
@@ -2514,6 +2656,7 @@
         const cats = livingCats();
         // Advance daily clock
         state.day++;
+        updateCrushEligibility();
         activePredatorRisk();
         state.dayOfMoon++;
 
@@ -2591,6 +2734,7 @@
         });
 
         // Give an apprentice a chance to train each day
+        if (cats.some(cat => !cat.alive)) updateCrushEligibility();
         apprenticeTrainingEvent();
         updateFamilies();
 
@@ -2620,24 +2764,30 @@
         const admirerParticipants = admirerEvent
             ? StoryEvents.selectParticipants(admirerEvent, livingCats(), state.playerCatId)
             : null;
+        const mateConflict = window.StoryEvents?.canTriggerEvent()
+            ? StoryEvents.findMateConflict(livingCats())
+            : null;
+        const priorityStory = mateConflict || (admirerParticipants
+            ? { event: admirerEvent, participants: admirerParticipants }
+            : null);
 
-        // Known admirers take priority at the next available story opportunity.
+        // Mate conflicts and known admirers take priority over random stories.
         if (
             window.StoryEvents &&
             StoryEvents.canTriggerEvent() &&
-            (admirerParticipants || StoryEvents.shouldTriggerEvent())
+            (priorityStory || StoryEvents.shouldTriggerEvent())
         ) {
             // Only select events whose global cooldown has expired.
             const availableEvents = StoryEvents.events.filter(
                 event => !StoryEvents.isEventOnCooldown(event)
             );
 
-            const storyEvent = admirerParticipants ? admirerEvent : StoryEvents.getRandomEvent(
+            const storyEvent = priorityStory?.event || StoryEvents.getRandomEvent(
                 availableEvents.filter(event => event.id !== "known_admirer")
             );
 
             if (storyEvent) {
-                const participants = admirerParticipants || StoryEvents.selectParticipants(
+                const participants = priorityStory?.participants || StoryEvents.selectParticipants(
                     storyEvent,
                     livingCats(),
                     state.playerCatId
@@ -2942,6 +3092,11 @@
 
             state = loaded;
             updateCrushEligibility();
+            const cats = livingCats();
+            cats.forEach((cat, index) => {
+                cat.relationships.rivals = [];
+                for (const other of cats.slice(0, index)) updateRivalry(cat, other);
+            });
             return true;
         } catch (err) {
             return false;
