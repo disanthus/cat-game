@@ -8,6 +8,61 @@ window.StoryEvents = (() => {
         game = dependencies;
     }
 
+    const FOOTPRINTS_RULES = {
+        predatorChance: 0.35,
+        warnedPredatorChance: 0.25,
+        otherCatChance: 0.35,
+        warningBonus: 0.15,
+        poorTrackingThreshold: 4,
+        predatorRiskBonus: 0.10,
+        predatorRiskDays: 5
+    };
+
+    function resolveFootprintsEncounter(patrol, warned, predatorRisk = 0, forcedPredator = false) {
+        if (!patrol.length) return { outcome: "No cats are available to investigate.", effects: [] };
+        const pick = items => items[Math.floor(Math.random() * items.length)];
+        const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+        const chance = probability => Math.random() < probability;
+        const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+        const effects = [];
+        const averageSkill = skill => patrol.reduce((sum, cat) => sum + (cat.skills[skill] || 0), 0) / patrol.length;
+        const predatorChance = (warned ? FOOTPRINTS_RULES.warnedPredatorChance : FOOTPRINTS_RULES.predatorChance) + predatorRisk;
+        const roll = Math.random();
+        const warningBonus = warned ? FOOTPRINTS_RULES.warningBonus : 0;
+        const names = patrol.map(cat => cat.name).join(", ");
+        const preparation = warned ? "After warning the clan and preparing, " : "Following the tracks, ";
+        let outcome;
+
+        if (forcedPredator || roll < predatorChance) {
+            const predator = pick(["fox", "badger", "dog"]);
+            const success = chance(clamp(0.35 + averageSkill("fighting") * 0.05 + warningBonus, 0.05, 0.95));
+            if (success) {
+                outcome = `${preparation}${names} encountered a ${predator} and drove it away safely.`;
+            } else {
+                const injured = pick(patrol);
+                const damage = rand(8, 20);
+                effects.push({ type: "health", catId: injured.id, value: -damage });
+                outcome = `${preparation}${names} encountered a ${predator}. ${injured.name} lost ${damage} health during the retreat.${injured.health > damage ? "" : ` ${injured.name} died from their injuries.`}`;
+            }
+        } else if (roll < predatorChance + FOOTPRINTS_RULES.otherCatChance) {
+            const stranger = pick(["loner", "kittypet", "rogue"]);
+            const friendly = chance(clamp(0.40 + averageSkill("intuition") * 0.04 + warningBonus, 0.05, 0.95));
+            outcome = `${preparation}${names} met a ${stranger}. ${friendly ? "They had a calm conversation and parted on friendly terms." : "They had a tense conversation that nearly ended in a fight."}`;
+        } else {
+            outcome = `${preparation}${names} found nothing and returned to camp.`;
+            if (!warned && averageSkill("hunting") < FOOTPRINTS_RULES.poorTrackingThreshold) {
+                effects.push({
+                    type: "predator_risk",
+                    bonus: FOOTPRINTS_RULES.predatorRiskBonus,
+                    days: FOOTPRINTS_RULES.predatorRiskDays
+                });
+                outcome += ` The patrol lost the trail. Predator encounters are more likely for the next ${FOOTPRINTS_RULES.predatorRiskDays} days.`;
+            }
+        }
+        effects.push({ type: "memory", value: "tracks_encounter", importance: 3, description: outcome });
+        return { outcome, effects };
+    }
+
     // How likely a story event is to occur on a
     // day when the game checks for one.
     const EVENT_CHANCE = .2;
@@ -36,7 +91,7 @@ window.StoryEvents = (() => {
             id: "strange_footprints",
             title: "Strange Footprints",
             category: "mystery",
-            participants: ["patrol"],
+            participantType: "footprints_patrol",
             description:
                 "A patrol discovers unfamiliar pawprints pressed into the mud near the territory border.",
 
@@ -44,19 +99,15 @@ window.StoryEvents = (() => {
                 {
                     id: "follow_tracks",
                     text: "Follow the tracks",
-                    outcome:
-                        "The pawprints lead deep into the undergrowth. Something has been watching the territory.",
                     effects: [
-                        { type: "clan_log", text: "A patrol discovered unfamiliar tracks." }
+                        { type: "footprints_encounter", warned: false }
                     ]
                 },
                 {
                     id: "warn_clan",
-                    text: "Warn the clan",
-                    outcome:
-                        "The patrol returns to camp. For the rest of the day, every rustle outside camp draws suspicious glances.",
+                    text: "Warn the clan, then investigate prepared",
                     effects: [
-                        { type: "clan_log", text: "The clan was warned about unfamiliar tracks." }
+                        { type: "footprints_encounter", warned: true }
                     ]
                 }
             ]
@@ -287,6 +338,7 @@ window.StoryEvents = (() => {
             title: "A Cry in the Bracken",
             category: "clan_life",
             participants: ["patrol"],
+            participantRequirements: { patrol: { minAge: 6 } },
             description:
                 "A patrol hears a tiny cry from a patch of bracken. Inside lies a frightened kit, alone and shivering.",
 
@@ -326,6 +378,10 @@ window.StoryEvents = (() => {
 
             requiresCats: 2,
             participants: ["rescuer", "victim"],
+            participantRequirements: {
+                rescuer: { minAge: 12 },
+                victim: { minAge: 6 }
+            },
             pairCooldown: 30,
 
             choices: [
@@ -371,6 +427,7 @@ window.StoryEvents = (() => {
 
             requiresCats: 2,
             participants: ["elder", "confidant"],
+            participantRequirements: { elder: { ranks: ["Elder"] } },
 
             choices: [
                 {
@@ -396,6 +453,45 @@ window.StoryEvents = (() => {
         }
 
     ];
+
+    // Crush event
+    events.push({
+        id: "known_admirer",
+        title: "A Conversation About Feelings",
+        description: "After learning who has feelings for them, a cat asks their admirer for a private conversation.",
+        category: "romance",
+        participantType: "known_admirer_pair",
+        requiresCats: 2,
+        pairOnce: true,
+        dialogue: {
+            start: {
+                speaker: "target",
+                decisionMaker: "target",
+                text: "{target} meets with {confessor} in a private corner of camp. \"So, I heard you have a crush on me?\"",
+                choices: [
+                    { text: "Because I would like to get to know you better, too.", next: "accept" },
+                    { text: "I care about you, but I don't feel that way.", next: "reject" }
+                ]
+            },
+            accept: {
+                speaker: "target",
+                text: "{target} and {confessor} agree to spend more time together and see how their feelings develop.",
+                effects: [
+                    { type: "relationship", value: 10 },
+                    { type: "memory", value: "admirer_conversation", importance: 3 }
+                ]
+            },
+            reject: {
+                speaker: "target",
+                text: "{target} gently explains their feelings. {confessor} listens, disappointed but grateful for an honest conversation.",
+                effects: [
+                    { type: "relationship", value: -10 },
+                    { type: "clear_crush", from: "confessor", to: "target" },
+                    { type: "memory", value: "rejected_confession", importance: 4 }
+                ]
+            }
+        }
+    });
 
     // Get or initialize persistent story history
     function getStoryHistory() {
@@ -599,6 +695,26 @@ window.StoryEvents = (() => {
             return shuffled
         }
 
+        if (event.participantType === "footprints_patrol") {
+            const patrol = shuffle(living.filter(cat => cat.age >= 6 && cat.health > 20 && cat.energy > 15)).slice(0, 3);
+            return patrol.length ? Object.fromEntries(patrol.map((cat, index) => [`patrol${index + 1}`, cat])) : null;
+        }
+
+        if (event.participantType === "known_admirer_pair") {
+            const candidates = living.flatMap(target => {
+                if (target.age < 12) return [];
+                const rumors = target.relationships?.knownGossip || [];
+                return living.filter(confessor =>
+                    confessor.id !== target.id && confessor.age >= 12 &&
+                    confessor.relationships?.crushes?.includes(target.id) &&
+                    rumors.some(rumor => rumor.type === "crush" &&
+                        rumor.subjectId === confessor.id && rumor.targetId === target.id) &&
+                    canPairExperienceEvent(event, confessor, target)
+                ).map(confessor => ({ confessor, target }));
+            });
+            return shuffle(candidates)[0] || null;
+        }
+
         // Select a pair where one cat has a crush on the other
         if (event.participantType == "confession_pair") {
             const candidates = living.flatMap(confessor => {
@@ -644,11 +760,32 @@ window.StoryEvents = (() => {
             return null;
         }
 
-        const selected = shuffle(living).slice(0, required);
+        const candidates = shuffle(living);
+        const selected = [];
 
-        if (!areParticipantsEligible(event, selected)) {
-            return null;
+        // Try eligible assignments so a cat needed for one role is not
+        // accidentally used in another, and pair cooldowns remain respected.
+        function assignParticipant(index) {
+            if (index === required) {
+                return areParticipantsEligible(event, selected);
+            }
+
+            const requirements = event.participantRequirements?.[roles?.[index]] || {};
+
+            for (const cat of candidates) {
+                if (selected.includes(cat)) continue;
+                if (requirements.minAge !== undefined && cat.age < requirements.minAge) continue;
+                if (requirements.ranks && !requirements.ranks.includes(cat.rank)) continue;
+
+                selected.push(cat);
+                if (assignParticipant(index + 1)) return true;
+                selected.pop();
+            }
+
+            return false;
         }
+
+        if (!assignParticipant(0)) return null;
 
         // If the event defines roles, return an object keyed by role
         if (Array.isArray(roles)) {
@@ -916,8 +1053,8 @@ window.StoryEvents = (() => {
 
                 // The recipient decides whether to accept or reject
                 if (
-                    event.participantType === "confession_pair" &&
-                    nodeId === "confession"
+                    (event.participantType === "confession_pair" && nodeId === "confession" ||
+                        event.participantType === "known_admirer_pair" && nodeId === "start")
                 ) {
                     const confessor = participants.confessor;
                     const target = participants.target;
@@ -1113,6 +1250,7 @@ window.StoryEvents = (() => {
     // variables in the global namespace
     return {
         initialize,
+        resolveFootprintsEncounter,
         events,
         getStoryHistory,
         formatText: getDialogueText,

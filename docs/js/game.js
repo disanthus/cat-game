@@ -304,6 +304,26 @@
 
         for (const effect of choice.effects || []) {
 
+            if (effect.type === "footprints_encounter") {
+                const result = window.StoryEvents.resolveFootprintsEncounter(cats, effect.warned, activePredatorRisk());
+                return applyEncounterResult(result, cats);
+            }
+
+            if (effect.type === "health") {
+                const cat = cats.find(participant => participant.id === effect.catId);
+                if (cat) {
+                    cat.health = clamp(cat.health + effect.value, 0, 100);
+                    if (cat.health === 0) cat.alive = false;
+                }
+            }
+
+            if (effect.type === "predator_risk") {
+                state.predatorRisk = {
+                    bonus: effect.bonus,
+                    expiresDay: state.day + effect.days
+                };
+            }
+
             // Relationship changes
             if (effect.type === "relationship") {
                 const change =
@@ -369,6 +389,14 @@
 
                 if (confessor && target) {
                     addCrush(confessor, target);
+                }
+            }
+
+            if (effect.type === "clear_crush") {
+                const admirer = participants[effect.from];
+                const target = participants[effect.to];
+                if (admirer && target) {
+                    admirer.relationships.crushes = admirer.relationships.crushes.filter(id => id !== target.id);
                 }
             }
 
@@ -469,6 +497,13 @@
     const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
     const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
     const chance = (p) => Math.random() < p;
+    const FAMILY_RULES = {
+        litterCooldown: 180,
+        attemptCooldown: 7,
+        minimumHealth: 60,
+        dailyNpcChance: 0.02,
+        dailyParentChance: 0.15
+    };
     const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
 
     const escapeHtml = (value) =>
@@ -758,6 +793,9 @@
 
             parents: overrides.parents || [],
             bornDay: overrides.bornDay ?? state?.day ?? 1,
+            fertility: overrides.fertility ?? rand(60, 90),
+            lastLitterDay: overrides.lastLitterDay ?? null,
+            lastBreedingAttemptDay: overrides.lastBreedingAttemptDay ?? null,
             relationships: {
                 crushes: [],
                 rivals: [],
@@ -848,6 +886,7 @@
             moon: 1,
             dayOfMoon: 1,
             seasonIndex: 0,
+            predatorRisk: null,
             prey: 9000,
             clanName: "WinterClan",
             cats: [],
@@ -1148,7 +1187,7 @@
         $("campEvents").innerHTML = state.log.slice(0, 5).map(eventHtml).join("") ||
             `<p class="empty-state">A quiet day in camp.</p>`;
 
-        const c = selectedCat();
+        const c = playerCat();
 
         $("selectedCatCard").innerHTML = c
             ? miniProfileHtml(c)
@@ -1486,13 +1525,6 @@
                     `<div class="gene-line">
             <span>${escapeHtml(other.name)}</span>
             <span>Has a crush on ${escapeHtml(c.name)}</span>
-            <button
-              class="button small"
-              data-reject-crush="${other.id}"
-              data-reject-target="${c.id}"
-            >
-              Reject
-            </button>
           </div>`
                 ).join("")
             || `<p class="muted">No secret admirers yet.</p>`}
@@ -1585,9 +1617,30 @@
             a.id !== b.id &&
             a.alive &&
             b.alive &&
-            a.age >= 12 &&
-            b.age >= 12
+            (
+                a.age >= 12 && b.age >= 12 ||
+                a.age >= 6 && a.age < 12 && a.rank === "Apprentice" &&
+                b.age >= 6 && b.age < 12 && b.rank === "Apprentice"
+            )
         );
+    }
+
+    function canKeepCrush(a, b) {
+        if (canHaveCrush(a, b)) return true;
+        if (!a || !b || a.id === b.id || !a.alive || !b.alive) return false;
+
+        const younger = a.age < b.age ? a : b;
+        const older = younger === a ? b : a;
+        return younger.rank === "Apprentice" && younger.age >= 6 && younger.age < 12 &&
+            older.age >= 12 && older.age - younger.age <= 3;
+    }
+
+    function updateCrushEligibility() {
+        for (const cat of livingCats()) {
+            cat.relationships.crushes = cat.relationships.crushes.filter(id =>
+                canKeepCrush(cat, getCat(id))
+            );
+        }
     }
 
     function canBecomeMates(a, b) {
@@ -1807,10 +1860,8 @@
             return;
         }
 
-        const kin =
-            a.parents.includes(b.id) ||
-            b.parents.includes(a.id) ||
-            a.parents.some(id => b.parents.includes(id));
+        const eligibility = canHaveLitter(a, b);
+        const fertilityChance = Math.round(a.fertility * b.fertility / 100);
 
         $("breedingPreview").innerHTML = `
       <div class="preview-title">Inheritance preview</div>
@@ -1819,29 +1870,71 @@
       <div class="gene-line"><span>Chocolate base (b/b)</span><span>${expectedRecessive(a, b, "B", "b")} chance</span></div>
       <div class="gene-line"><span>Dilution (d/d)</span><span>${expectedRecessive(a, b, "D", "d")} chance</span></div>
       <div class="gene-line"><span>High white (S/S)</span><span>${expectedRecessive(a, b, "S", "S")} chance</span></div>
-      <p class="fine-print">${kin
-                ? "Family note: these cats appear to be close relatives. Inbreeding tracking and genetic-health consequences are not implemented yet."
-                : "Each kitten inherits one allele from each parent at each locus. Litter outcomes are random, so probabilities describe many births, not guarantees."
-            }</p>`;
+      <p class="fine-print">${escapeHtml(eligibility.reason || `Chance of a litter per attempt: ${fertilityChance}%.`)}</p>`;
+    }
+
+    function areCloseRelatives(a, b) {
+        const parentsA = a.parents || [];
+        const parentsB = b.parents || [];
+        return parentsA.includes(b.id) || parentsB.includes(a.id) ||
+            parentsA.some(id => parentsB.includes(id));
+    }
+
+    function canHaveLitter(a, b) {
+        if (!a || !b || !a.alive || !b.alive || a.id === b.id || a.age < 12 || b.age < 12) {
+            return { allowed: false, reason: "Choose two different living adults who are at least 12 moons old." };
+        }
+        if (a.sex === b.sex) {
+            return { allowed: false, reason: "A litter requires one male and one female parent." };
+        }
+        if (!canBecomeMates(a, b)) {
+            return { allowed: false, reason: "One of these cats already has another mate." };
+        }
+        if (areCloseRelatives(a, b)) {
+            return { allowed: false, reason: "Parents and their kits, and cats sharing a parent, cannot breed together." };
+        }
+        for (const cat of [a, b]) {
+            if (cat.health < FAMILY_RULES.minimumHealth) {
+                return { allowed: false, reason: `${cat.name} needs at least ${FAMILY_RULES.minimumHealth} health before breeding.` };
+            }
+            const litterWait = cat.lastLitterDay === null ? 0 :
+                FAMILY_RULES.litterCooldown - (state.day - cat.lastLitterDay);
+            const attemptWait = cat.lastBreedingAttemptDay === null ? 0 :
+                FAMILY_RULES.attemptCooldown - (state.day - cat.lastBreedingAttemptDay);
+            const wait = Math.max(litterWait, attemptWait);
+            if (wait > 0) {
+                return { allowed: false, reason: `${cat.name} can try for kits again in ${wait} days.` };
+            }
+        }
+        return { allowed: true, reason: "" };
     }
 
     function breedLitter() {
-        const a = getCat($("parentA").value);
-        const b = getCat($("parentB").value);
+        const result = attemptLitter(getCat($("parentA").value), getCat($("parentB").value));
+        showNotice(result.message);
+        render();
+    }
 
-        // Cats must be adult and alive
-        if (!a || !b || !a.alive || !b.alive || a.id === b.id || a.age < 12 || b.age < 12) {
-            showNotice("Choose two different adult cats who are at least 12 moons old.");
-            return;
+    function attemptLitter(a, b) {
+        const eligibility = canHaveLitter(a, b);
+        if (!eligibility.allowed) return { kits: [], message: eligibility.reason };
+
+        a.lastBreedingAttemptDay = state.day;
+        b.lastBreedingAttemptDay = state.day;
+        if (!chance(a.fertility * b.fertility / 10000)) {
+            const message = `${a.name} and ${b.name} tried for kits, but no litter arrived. They can try again in ${FAMILY_RULES.attemptCooldown} days.`;
+            logEvent("family", message);
+            saveGame(false);
+            return { kits: [], message };
         }
+        const kits = createLitter(a, b);
+        a.lastLitterDay = state.day;
+        b.lastLitterDay = state.day;
+        saveGame(false);
+        return { kits, message: `${kits.length} ${kits.length === 1 ? "kit" : "kits"} joined the clan!` };
+    }
 
-        // Comphet
-        if (a.sex === b.sex) {
-            showNotice("A litter requires one male and one female parent.");
-            return;
-        }
-
-
+    function createLitter(a, b) {
         // Record the parents as mates.
         if (!a.relationships.mates.includes(b.id)) {
             a.relationships.mates.push(b.id);
@@ -1877,7 +1970,6 @@
                 rightEyeColor,
                 parents: [a.id, b.id],
                 bornDay: state.day,
-                name: `${pick(NAMES.prefixes)}kit`,
                 skills: {
                     hunting: 1,
                     fighting: 1,
@@ -1915,8 +2007,56 @@
             }`
         );
 
-        showNotice(`${kits.length} ${kits.length === 1 ? "kit" : "kits"} joined the clan! Their hidden genes have been recorded.`);
-        render();
+        return kits;
+    }
+
+    function updateFamilies() {
+        const processedPairs = new Set();
+        for (const cat of livingCats()) {
+            for (const mateId of cat.relationships.mates) {
+                const mate = getCat(mateId);
+                if (!mate || cat.id === state.playerCatId || mate.id === state.playerCatId) continue;
+                const key = [cat.id, mate.id].sort().join(":");
+                if (processedPairs.has(key)) continue;
+                processedPairs.add(key);
+                if (canHaveLitter(cat, mate).allowed && chance(FAMILY_RULES.dailyNpcChance)) {
+                    attemptLitter(cat, mate);
+                }
+            }
+        }
+
+        for (const kit of livingCats().filter(cat => cat.age < 6)) {
+            const parents = (kit.parents || []).map(getCat).filter(Boolean);
+            if (!parents.length || !chance(FAMILY_RULES.dailyParentChance)) continue;
+            const parent = pick(parents);
+            let description = `${parent.name} spent time with ${kit.name} in the nursery.`;
+            if (kit.age >= 3) {
+                const skills = ["hunting", "stealth", "agility", "curiosity"];
+                const teachable = skills.filter(skill =>
+                    kit.skills[skill] < 3 && parent.skills[skill] > kit.skills[skill]
+                );
+                if (teachable.length) {
+                    const skill = pick(teachable);
+                    kit.skills[skill] += 1;
+                    description = `${parent.name} taught ${kit.name} a little about ${skill} through play.`;
+                }
+            }
+            setRelationship(parent, kit, relationship(parent, kit) + 3);
+            recordCatEvent("family_time", [parent, kit], { importance: 2, description });
+        }
+    }
+
+    function activePredatorRisk() {
+        if (!state.predatorRisk || state.day >= state.predatorRisk.expiresDay) {
+            state.predatorRisk = null;
+            return 0;
+        }
+        return state.predatorRisk.bonus;
+    }
+
+    function applyEncounterResult(result, patrol) {
+        applyStoryChoice({ effects: result.effects }, patrol);
+        return result.outcome;
     }
 
     function renderTerritory() {
@@ -1958,6 +2098,15 @@
             c.hunger = clamp(c.hunger + rand(8, 15), 0, 100);
             c.experience += rand(1, 3);
         });
+
+        if (chance(activePredatorRisk())) {
+            const result = window.StoryEvents.resolveFootprintsEncounter(patrol, false, activePredatorRisk(), true);
+            const outcome = applyEncounterResult(result, patrol);
+            saveGame(false);
+            render();
+            showNotice(outcome);
+            return;
+        }
 
         const skillTotal = patrol.reduce(
             (n, c) => n + (c.skills[loc.skill] || 1), 0
@@ -2105,7 +2254,14 @@
             trainingSkills.push("swimming");
         }
 
-        const skill = pick(trainingSkills);
+        const eligibleSkills = trainingSkills.filter(skill =>
+            (apprentice.skills[skill] || 0) < 10 &&
+            (mentor.skills[skill] || 0) > (apprentice.skills[skill] || 0)
+        );
+
+        if (!eligibleSkills.length) return;
+
+        const skill = pick(eligibleSkills);
 
         // A more experienced mentor is better at teaching this skill.
         const mentorSkill = mentor.skills[skill] || 0;
@@ -2138,7 +2294,7 @@
                 mentorSkill >= 8 && chance(0.25) ? 2 : 1;
 
             const oldSkill = apprenticeSkill;
-            const newSkill = clamp(oldSkill + gain, 0, 10);
+            const newSkill = clamp(oldSkill + gain, 0, Math.min(10, mentorSkill));
             const actualGain = newSkill - oldSkill;
 
             apprentice.skills[skill] = newSkill;
@@ -2197,6 +2353,9 @@
                 );
             }
         });
+
+        // Check after every cat has aged so results do not depend on roster order.
+        updateCrushEligibility();
 
         logEvent(
             "moon",
@@ -2364,6 +2523,7 @@
         const cats = livingCats();
         // Advance daily clock
         state.day++;
+        activePredatorRisk();
         state.dayOfMoon++;
 
         // Update emotional intensity of memories
@@ -2441,6 +2601,7 @@
 
         // Give an apprentice a chance to train each day
         apprenticeTrainingEvent();
+        updateFamilies();
 
         // Small spontaneous camp events.
         if (chance(.55)) {
@@ -2464,21 +2625,28 @@
             logEvent("clan", "Several cats have begun to worry about the shrinking prey stores.");
         }
 
-        // Sometimes trigger a larger story event.
+        const admirerEvent = window.StoryEvents?.events.find(event => event.id === "known_admirer");
+        const admirerParticipants = admirerEvent
+            ? StoryEvents.selectParticipants(admirerEvent, livingCats(), state.playerCatId)
+            : null;
+
+        // Known admirers take priority at the next available story opportunity.
         if (
             window.StoryEvents &&
             StoryEvents.canTriggerEvent() &&
-            StoryEvents.shouldTriggerEvent()
+            (admirerParticipants || StoryEvents.shouldTriggerEvent())
         ) {
             // Only select events whose global cooldown has expired.
             const availableEvents = StoryEvents.events.filter(
                 event => !StoryEvents.isEventOnCooldown(event)
             );
 
-            const storyEvent = StoryEvents.getRandomEvent(availableEvents);
+            const storyEvent = admirerParticipants ? admirerEvent : StoryEvents.getRandomEvent(
+                availableEvents.filter(event => event.id !== "known_admirer")
+            );
 
             if (storyEvent) {
-                const participants = StoryEvents.selectParticipants(
+                const participants = admirerParticipants || StoryEvents.selectParticipants(
                     storyEvent,
                     livingCats(),
                     state.playerCatId
@@ -2508,8 +2676,9 @@
                                 console.log("1. Player event callback reached:", choice);
                                 console.log("2. Participants:", eventParticipants);
 
+                                let resolvedOutcome;
                                 try {
-                                    applyStoryChoice(choice, eventParticipants);
+                                    resolvedOutcome = applyStoryChoice(choice, eventParticipants);
                                     console.log("3. applyStoryChoice completed");
                                 } catch (error) {
                                     console.error("ERROR in applyStoryChoice:", error);
@@ -2517,7 +2686,7 @@
                                 }
 
                                 const rawOutcome =
-                                    choice.outcome ||
+                                    resolvedOutcome || choice.outcome ||
                                     choice.text ||
                                     "The event came to an end.";
 
@@ -2547,10 +2716,10 @@
                             storyEvent,
                             participants,
                             (result) => {
-                                applyStoryChoice(result, participants);
+                                const resolvedOutcome = applyStoryChoice(result, participants);
 
                                 const outcome =
-                                    result.outcome ||
+                                    resolvedOutcome || result.outcome ||
                                     result.text ||
                                     "The event came to an end.";
 
@@ -2574,10 +2743,10 @@
                             participants
                         );
 
-                        applyStoryChoice(choice, participants);
+                        const resolvedOutcome = applyStoryChoice(choice, participants);
 
                         const outcome = StoryEvents.formatText(
-                            choice.outcome || choice.text,
+                            resolvedOutcome || choice.outcome || choice.text,
                             participants
                         );
 
@@ -2675,12 +2844,12 @@
 
         if (!next) return;
 
-        const normalized = RANKS.find(
+        const normalized = options.find(
             r => r.toLowerCase() === next.trim().toLowerCase()
         );
 
         if (!normalized) {
-            showNotice("That rank isn't recognized.");
+            showNotice("That rank isn't available for this cat.");
             return;
         }
 
@@ -2714,9 +2883,18 @@
             if (!loaded || !Array.isArray(loaded.cats) || !loaded.version) {
                 return false;
             }
+            loaded.predatorRisk ??= null;
 
             // Fill in defaults for stats added in newer versions.
             loaded.cats.forEach(cat => {
+                cat.fertility ??= rand(60, 90);
+                cat.lastBreedingAttemptDay ??= null;
+                if (cat.lastLitterDay == null) {
+                    const birthDays = loaded.cats
+                        .filter(child => child.parents?.includes(cat.id) && Number.isFinite(child.bornDay))
+                        .map(child => child.bornDay);
+                    cat.lastLitterDay = birthDays.length ? Math.max(...birthDays) : null;
+                }
                 // Let cats remember
                 if (!Array.isArray(cat.memories)) {
                     cat.memories = [];
@@ -2772,6 +2950,7 @@
             });
 
             state = loaded;
+            updateCrushEligibility();
             return true;
         } catch (err) {
             return false;
@@ -2810,7 +2989,6 @@
         $("creatorOverlay").classList.add("open");
 
         selectedCatId = state.playerCatId;
-        saveGame(false);
         render();
         showNotice("Create your new cat to begin.");
     }

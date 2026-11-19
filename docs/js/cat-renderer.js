@@ -802,7 +802,7 @@ window.CatRenderer = (() => {
     )
 
     loadArtworkMarking("lh-kitten",
-        "stache",
+        "mustache",
         "assets/cats/markings/kit-stache.png"
     )
 
@@ -881,7 +881,7 @@ window.CatRenderer = (() => {
     )
 
     loadArtworkMarking("sh-kitten",
-        "stache",
+        "mustache",
         "assets/cats/markings/kit-stache.png"
     )
 
