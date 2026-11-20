@@ -17,6 +17,8 @@ window.NPC = (() => {
             return "rest";
         }
 
+        if (cat.quarantined) return "rest";
+
         if (cat.age < 6) {
             if (cat.energy < 35) return "rest";
             return game.pick(["play", "socialize", "rest"]);
@@ -68,6 +70,7 @@ window.NPC = (() => {
         // Cats with strong friendships are more likely to socialize.
         const friends = game.livingCats().filter(other =>
             other.id !== cat.id &&
+            !other.quarantined &&
             other.age >= 6 &&
             game.relationship(cat, other) >= 60
         );
@@ -105,7 +108,7 @@ window.NPC = (() => {
             cat.hunger = game.clamp(cat.hunger + game.rand(3, 8), 0, 100);
             cat.experience += 1;
 
-            const huntingSkill = cat.skills.hunting || 1;
+            const huntingSkill = CatConditions.skill(cat, "hunting", 1);
             let successChance = 0.35 + huntingSkill * 0.06;
 
             if (cat.personality === "observant") successChance += 0.08;
@@ -117,7 +120,7 @@ window.NPC = (() => {
                 state.prey += preyCaught;
 
                 if (game.chance(0.25)) {
-                    cat.skills.hunting = game.clamp(huntingSkill + 1, 0, 10);
+                    cat.skills.hunting = game.clamp((cat.skills.hunting || 1) + 1, 0, 10);
                 }
 
                 result = `${cat.name} caught ${preyCaught} prey while hunting.`;
@@ -140,7 +143,7 @@ window.NPC = (() => {
             }
         } else if (activity === "socialize") {
             const others = game.livingCats().filter(other =>
-                other.id !== cat.id && other.age >= 6
+                other.id !== cat.id && other.age >= 6 && !other.quarantined
             );
 
             if (others.length === 0) {
@@ -410,7 +413,7 @@ window.NPC = (() => {
 
         // Some situations benefit from particular skills
         if (situation.skill) {
-            const skill = cat.skills?.[situation.skill] ?? 0;
+            const skill = CatConditions.skill(cat, situation.skill);
             score += (skill - 3) * 5;
         }
 

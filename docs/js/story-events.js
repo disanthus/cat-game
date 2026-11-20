@@ -25,12 +25,12 @@ window.StoryEvents = (() => {
         const chance = probability => Math.random() < probability;
         const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
         const effects = [];
-        const averageSkill = skill => patrol.reduce((sum, cat) => sum + (cat.skills[skill] || 0), 0) / patrol.length;
+        const averageSkill = skill => patrol.reduce((sum, cat) => sum + CatConditions.skill(cat, skill), 0) / patrol.length;
         const predatorChance = (warned ? FOOTPRINTS_RULES.warnedPredatorChance : FOOTPRINTS_RULES.predatorChance) + predatorRisk;
         const roll = Math.random();
         const warningBonus = warned ? FOOTPRINTS_RULES.warningBonus : 0;
         const names = patrol.map(cat => cat.name).join(", ");
-        const preparation = warned ? "The patrol returns to camp to warn their clanmates. With all the kits and apprentices accounted for, the patrol heads back out again to review the tracks again. " : "Following the tracks, ";
+        const preparation = warned ? "The patrol sends their swiftest cat to return to camp and warn the others. Once they come back, they brave the footprints together. " : "Following the tracks, ";
         let outcome;
 
         if (forcedPredator || roll < predatorChance) {
@@ -42,12 +42,18 @@ window.StoryEvents = (() => {
                 const injured = pick(patrol);
                 const damage = rand(8, 20);
                 effects.push({ type: "health", catId: injured.id, value: -damage });
-                outcome = `${preparation}${names} encounter a ${predator}. ${injured.name} loses ${damage} health during the retreat.${injured.health > damage ? "" : ` ${injured.name} die from their injuries.`}`;
+                effects.push({
+                    type: "injury",
+                    catId: injured.id,
+                    condition: damage >= 17 ? "brokenLeg" : "scrape",
+                    chance: damage >= 17 ? .65 : .6
+                });
+                outcome = `${preparation}${names} encounter a ${predator}. ${injured.name} loses ${damage} health during the retreat.${injured.health > damage ? "" : ` ${injured.name} dies from their injuries.`}`;
             }
         } else if (roll < predatorChance + FOOTPRINTS_RULES.otherCatChance) {
             const stranger = pick(["loner", "kittypet", "rogue"]);
             const friendly = chance(clamp(0.40 + averageSkill("intuition") * 0.04 + warningBonus, 0.05, 0.95));
-            outcome = `${preparation}${names} meet a ${stranger}. ${friendly ? "They have a calm conversation and part on friendly terms." : "They have a tense conversation that nearly ended in a fight."}`;
+            outcome = `${preparation}${names} meet a ${stranger}. ${friendly ? "They have a calm conversation and part on friendly terms." : "They have a tense conversation that nearly ends in a fight."}`;
         } else {
             outcome = `${preparation}${names} find nothing and return to camp.`;
             if (!warned && averageSkill("hunting") < FOOTPRINTS_RULES.poorTrackingThreshold) {
@@ -138,21 +144,21 @@ window.StoryEvents = (() => {
                     // TODO: add personality text
                     personalityText: {
                         bold:
-                            "{confessor} asks {target} to meet them at moonhigh. {confessor} arrives with their tail high, buzzing with a nervous excitement that even {target} can feel from a tail-length away. Without any more pretense, {confessor} speaks.",
+                            "{confessor} arrives with their tail high, buzzing with a nervous excitement that even {target} can feel from a tail-length away. Without any more pretense, {confessor} speaks.",
                         gentle:
-                            "{confessor} asks {target} to meet them at moonhigh.",
+                            "",
                         curious:
-                            "{confessor} asks {target} to meet them at moonhigh.",
+                            "",
                         patient:
-                            "{confessor} asks {target} to meet them at moonhigh.",
+                            "",
                         helpful:
-                            "{confessor} asks {target} to meet them at moonhigh. {confessor} arrives with prey, admitting they thought {target} might be hungry. After sharing a few bites, {confessor} raises their head and gazes intently at {target} -- like they have something on their mind.",
+                            "{confessor} arrives with prey, admitting they thought {target} might be hungry. After sharing a few bites, {confessor} raises their head and gazes intently at {target} -- like they have something on their mind.",
                         wary:
-                            "{confessor} asks {target} to meet them at moonhigh. {target} notices that {confessor} looks especially nervous tonight, shuffling their paws and glancing around furtively like they're worried they're being watched. {confessor} seems like they might lose their nerve at any moment.",
+                            "{target} notices that {confessor} looks especially nervous tonight, shuffling their paws and glancing around furtively like they're worried they're being watched. {confessor} seems like they might lose their nerve at any moment.",
                         playful:
-                            "",
+                            "{confessor} bumps their shoulder against {target}'s as they settle in close beside them. Their tailtip taps an easygoing rhythm against the ground, but there's a spark of uneasy in {confessor}'s face.",
                         proud:
-                            "",
+                            "{confessor} sits primly before {target}, tail coiled tightly over their forepaws.",
                         observant:
                             "",
                         stubborn:
@@ -255,7 +261,7 @@ window.StoryEvents = (() => {
                         wary:
                             "{target} hesitates, a small frown forming on their face. The rejection there comes a beat before they finally muster the courage to verbalize it: \"I'm sorry, {confessor}. I just-- we can't be together. I'm sorry.\"",
                         playful:
-                            "{target} laughs. When {confessor} doesn't start laughing along with them, {target}'s face falls. \"Oh, you're serious?!\" Embarrassment flushes their ears red. \"Sorry, {confessor}, but ... I just like us better as friends.",
+                            "{target} laughs. When {confessor} doesn't start laughing along with them, {target}'s face falls. \"Oh, you're serious?!\" Embarrassment flushes their ears red. \"Sorry, {confessor}, but ... I just like us better as friends.\"",
                         proud:
                             "{target} scoffs. \"You? And me? No way. Not even in your dreams.\"",
                         observant:
@@ -302,7 +308,6 @@ window.StoryEvents = (() => {
             category: "drama",
             description:
                 "A cat overhears two clanmates laughing together and becomes convinced they are being deliberately excluded.",
-
             requiresCats: 2,
             participants: ["jealous_cat", "clanmate"],
             decisionMaker: "jealous_cat",
@@ -313,20 +318,20 @@ window.StoryEvents = (() => {
                     id: "confront",
                     text: "Confront the clanmates",
                     outcome:
-                        "The confrontation brings buried frustrations to the surface. Neither cat leaves the conversation feeling entirely understood.",
+                        "{jealous_cat} sets their jaw and storms over to confront the two cats. Their laughter falls away as {jealous_cat}'s shadow passes over their loafing silhouettes. When {jealous_cat} confronts them, {clanmate} becomes defensive and accuses {jealous_cat} of eavesdropping. The conversation quickly devolves into an argument, further straining the relationship between {jealous_cat} and {clanmate}.",
                     effects: [
                         { type: "relationship", value: "negative" },
-                        { type: "memory", value: "hurtful_argument" }
+                        { type: "memory", value: "hurtful_argument", importance: 3}
                     ]
                 },
                 {
                     id: "talk_privately",
-                    text: "Talk privately with a trusted friend",
+                    text: "Talk privately with another clanmate",
                     outcome:
-                        "A quiet conversation helps the cat consider another explanation, though their insecurity doesn't disappear overnight.",
+                        "After a heartbeat, {jealous_cat} flattens their ears and turns away from their laughing clanmates, determined not to let their hurt feelings turn into explosive impulsivity. Later, they meet with {confidant} to talk about what happened. {confidant} offers reassurance and a new perspective on the situation, soothing {jealous_cat} to some degree.",
                     effects: [
                         { type: "relationship", value: "positive" },
-                        { type: "memory", value: "supportive_conversation" }
+                        { type: "memory", value: "supportive_conversation", importance: 2}
                     ]
                 }
             ]
@@ -351,17 +356,18 @@ window.StoryEvents = (() => {
                     id: "bring_kit_home",
                     text: "Bring the kit to camp",
                     outcome:
-                        "The patrol carries the kit home. The clan must decide how to protect this unexpected new arrival.",
+                        "After a brief discussion over what to do next, {patrol} picks the kit up and brings them back to camp.",
                     effects: [
                         { type: "special_event", value: "rescue_kit" },
-                        { type: "clan_log", text: "A patrol found a kit alone in the bracken." }
+                        { type: "clan_log", text: "A patrol found a kit alone in the bracken." },
+                        { type: "memory", value: "rescued_kit", importance: 4}
                     ]
                 },
                 {
                     id: "search_area",
                     text: "Search for the kit's family",
                     outcome:
-                        "The patrol searches the surrounding area before deciding what to do next.",
+                        "The patrol searches the surrounding area for a sign of the kit's mother. When they return to the bracken, the kit is gone.",
                     effects: [
                         { type: "special_event", value: "search_for_family" }
                     ]
@@ -407,7 +413,7 @@ window.StoryEvents = (() => {
                     id: "find_another_way",
                     text: "Find a safer way down",
                     outcome:
-                        "The patrol scrambles around the slope. The rescue takes longer, and every passing moment feels unbearable.",
+                        "The patrol scrambles around the slope. The rescue takes longer, and every passing moment feels unbearable. Eventually they make their way down to {victim}.",
                     effects: [
                         {
                             type: "danger_check",
@@ -490,9 +496,10 @@ window.StoryEvents = (() => {
             },
             reject: {
                 speaker: "target",
-                text: "{target} gently explains their feelings. {confessor} listens, disappointed but grateful for an honest conversation.",
+                text: "{target} gently explains that they don't feel the same way. {confessor} listens, disappointed but grateful for an honest conversation.",
+                // TODO: personality text
                 effects: [
-                    { type: "relationship", value: -10 },
+                    { type: "relationship", value: -15 },
                     { type: "clear_crush", from: "confessor", to: "target" },
                     { type: "memory", value: "rejected_confession", importance: 4 }
                 ]
@@ -1113,7 +1120,10 @@ window.StoryEvents = (() => {
         if (!isString && speaker && node.personalityText) {
             const variation = node.personalityText[speaker.personality];
 
-            if (variation) {
+            if (Array.isArray(variation)) {
+                const index = Math.floor(Math.random() * variation.length);
+                text = variation[index] || text;
+            } else if (variation) {
                 text = variation;
             }
         }
@@ -1131,6 +1141,14 @@ window.StoryEvents = (() => {
                     speaker: "clanmate",
                     decisionMaker: "player",
                     text: "“Hey, {player}. Want to sit with me for a while? It’s quieter over here.”",
+                    personalityText: {
+                        playful: [
+                            "“Come sit with me, {player}. I have a story you have to hear.”",
+                            "“{player}, settle a debate. How many mice could you carry at once?”",
+                            "“I saved you the sunny spot. Your turn to tell a story.”"
+                        ],
+                        wary: "“Got a moment, {player}? I’d rather talk somewhere quiet.”"
+                    },
                     choices: [
                         { text: "Stay and chat", next: "stay" },
                         { text: "Maybe later", next: "leave" }
@@ -1147,6 +1165,40 @@ window.StoryEvents = (() => {
                 }
             }
         }, { player, clanmate }, onChoice);
+    }
+
+    function resolveChoiceParticipants(event, choice, participants) {
+        if (event.id !== "jealous_words" || choice.id !== "talk_privately") {
+            return { choice, participants };
+        }
+
+        const { jealous_cat, clanmate } = participants;
+        const { relationship, relationshipLabel } = window.Relationships;
+        const friends = [];
+        const neutral = [];
+        for (const cat of game.getState().cats) {
+            if (!cat || cat.alive === false || cat.quarantined || cat.id === jealous_cat.id || cat.id === clanmate.id) continue;
+            if (!canPairExperienceEvent(event, jealous_cat, cat)) continue;
+
+            const label = relationshipLabel(relationship(jealous_cat, cat));
+            if (label === "friendly" || label === "close bond") friends.push(cat);
+            if (label === "neutral") neutral.push(cat);
+        }
+
+        const pool = friends.length ? friends : neutral;
+        if (pool.length) {
+            const confidant = pool[Math.floor(Math.random() * pool.length)];
+            return { choice, participants: { jealous_cat, confidant } };
+        }
+
+        return {
+            choice: {
+                ...choice,
+                outcome: "{jealous_cat} keeps their thoughts to themselves for now.",
+                effects: []
+            },
+            participants: { jealous_cat }
+        };
     }
 
     function showStoryEvent(event, participants, onChoice) {
@@ -1170,13 +1222,15 @@ window.StoryEvents = (() => {
             focusTarget?.focus();
         }
 
-        function completeEvent(result) {
+        function completeEvent(result, displayedText) {
             clearEvent();
-            recordEventParticipants(event, participants);
+            const resolved = resolveChoiceParticipants(event, result, participants);
+            const { choice, participants: choiceParticipants } = resolved;
+            recordEventParticipants(event, choiceParticipants);
             onChoice({
-                ...result,
-                outcome: result.outcome || getDialogueText(result, participants)
-            }, participants);
+                ...choice,
+                outcome: choice.outcome || (displayedText ?? getDialogueText(choice, choiceParticipants))
+            }, choiceParticipants);
         }
 
         function showPanel(text, speaker) {
@@ -1234,7 +1288,8 @@ window.StoryEvents = (() => {
                 return;
             }
 
-            const actions = showPanel(getDialogueText(node, participants), getParticipant(participants, node.speaker));
+            const dialogueText = getDialogueText(node, participants);
+            const actions = showPanel(dialogueText, getParticipant(participants, node.speaker));
             const choices = availableChoices(node, participants);
 
             function advance(choice) {
@@ -1304,7 +1359,7 @@ window.StoryEvents = (() => {
             }
 
             if (!choices.length) {
-                addChoice(actions, "Continue", () => completeEvent(node));
+                addChoice(actions, "Continue", () => completeEvent(node, dialogueText));
             } else if (playerMakesDecision(node.decisionMaker)) {
                 choices.forEach(choice => {
                     addChoice(actions, choice.text, () => advance(choice));
@@ -1421,6 +1476,7 @@ window.StoryEvents = (() => {
         shouldTriggerEvent,
         getRandomEvent,
         selectParticipants,
+        resolveChoiceParticipants,
         involvesPlayer,
         showStoryEvent,
         showClanmateConversation,

@@ -6,12 +6,12 @@
   --paper: #fbf5ef;
   --panel: #fbf5ef;
   --line: #c69fa5;
-  --forest: #272744;
-  --forest-dark: #92929c;
-  --sage: #ffd4a3;
-  --moss: #8b6d9c;
-  --gold: #c69fa5;
-  --rose: #d08159;
+  --deep-indigo: #272744;
+  --cool-gray: #92929c;
+  --peach: #ffd4a3;
+  --mauve: #8b6d9c;
+  --dusty-rose: #c69fa5;
+  --terracotta: #d08159;
   --shadow: 0 12px 35px rgba(41, 58, 47, 0.08);
 }
 
@@ -72,12 +72,12 @@ body {
   border: 0;
   border-radius: 5px;
   background: var(--muted);
-  color: var(--sage);
+  color: var(--peach);
   font-weight: 800;
 }
 
 .story-event-actions button:hover {
-  background: var(--forest);
+  background: var(--deep-indigo);
 }
 
 .story-dialogue {
@@ -109,7 +109,7 @@ body {
   padding: 7px 16px;
   border-radius: 5px;
   background: var(--muted);
-  color: var(--sage);
+  color: var(--peach);
   font-size: 1rem;
 }
 
@@ -151,7 +151,7 @@ input:focus-visible {
 
 .topbar {
   padding: 28px 34px 24px;
-  background: var(--forest);
+  background: var(--deep-indigo);
   color: #fffdf5;
   display: flex;
   align-items: center;
@@ -186,7 +186,7 @@ h3 {
 }
 
 .paw {
-  color: var(--gold);
+  color: var(--dusty-rose);
   font-size: 0.72em;
 }
 .subtitle {
@@ -200,7 +200,7 @@ h3 {
     monospace;
   letter-spacing: 0.13em;
   text-transform: uppercase;
-  color: var(--moss);
+  color: var(--mauve);
   margin-bottom: 8px;
 }
 
@@ -228,7 +228,7 @@ h3 {
 .button {
   background: #f7f5eb;
   border: 1px solid #d4d9ca;
-  color: var(--forest-dark);
+  color: var(--cool-gray);
   padding: 10px 15px;
   border-radius: 10px;
   font-weight: 800;
@@ -243,7 +243,7 @@ h3 {
 }
 
 .button.primary {
-  background: var(--gold);
+  background: var(--dusty-rose);
   border-color: #8b6d9c;
   color: #272744;
 }
@@ -305,12 +305,12 @@ h3 {
 }
 
 .tab:hover {
-  color: var(--forest);
+  color: var(--deep-indigo);
 }
 
 .tab.active {
-  color: var(--forest-dark);
-  border-bottom-color: var(--gold);
+  color: var(--cool-gray);
+  border-bottom-color: var(--dusty-rose);
 }
 
 main {
@@ -339,7 +339,7 @@ main {
 
 .hero-card {
   min-height: 250px;
-  background: var(--forest);
+  background: var(--deep-indigo);
   border-radius: 18px;
   overflow: hidden;
   color: #fffdf5;
@@ -464,7 +464,7 @@ main {
   margin-top: 5px;
   flex: 0 0 auto;
   border-radius: 50%;
-  background: var(--gold);
+  background: var(--dusty-rose);
 }
 
 .event-item small {
@@ -658,6 +658,108 @@ input {
   font-size: 0.88rem;
 }
 
+.profile-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.profile-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  margin-top: 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.profile-tab {
+  position: relative;
+  margin-bottom: -1px;
+  padding: 8px clamp(5px, 2vw, 16px);
+  border: 1px solid transparent;
+  border-bottom-color: var(--line);
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+
+.profile-tab:hover {
+  color: var(--ink);
+  background: #f5f4eb;
+}
+
+.profile-tab[aria-current="true"] {
+  border-color: var(--line);
+  border-bottom-color: var(--panel);
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: inset 0 3px var(--mauve);
+}
+
+.profile-tab:focus-visible {
+  z-index: 1;
+  outline: 2px solid var(--deep-indigo);
+  outline-offset: -4px;
+}
+
+.profile-control[aria-pressed="true"] {
+  background: var(--deep-indigo);
+  border-color: var(--deep-indigo);
+  color: var(--paper);
+}
+
+.profile-genetics summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.profile-genetics[open] summary {
+  margin-bottom: 10px;
+}
+
+.profile-card-list {
+  display: grid;
+  gap: 10px;
+}
+
+.profile-card {
+  background: #f5f4eb;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+  overflow-wrap: anywhere;
+}
+
+.profile-card h4,
+.memory-heading h4 {
+  margin: 0;
+}
+
+.profile-card p {
+  margin: 6px 0;
+}
+
+.profile-card button {
+  margin-top: 4px;
+}
+
+.memory-heading {
+  justify-content: space-between;
+  margin-top: 0;
+}
+
+.memory-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
 .trait-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -689,7 +791,7 @@ input {
 .meter span {
   display: block;
   height: 100%;
-  background: var(--moss);
+  background: var(--mauve);
   border-radius: inherit;
 }
 
@@ -920,7 +1022,7 @@ footer {
 .text-button {
   border: 0;
   background: transparent;
-  color: var(--forest);
+  color: var(--deep-indigo);
   font-weight: 800;
   padding: 4px;
 }

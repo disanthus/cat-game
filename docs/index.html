@@ -57,6 +57,30 @@
 
         <div class="stats-grid" id="statsGrid"></div>
 
+        <section class="panel" id="deputyAppointment" hidden>
+          <h3>Choose a deputy</h3>
+          <div id="deputyControls">
+            <div class="action-row">
+              <label for="deputyCandidate">Warrior</label>
+              <select id="deputyCandidate"></select>
+              <button class="button primary small" id="appointDeputyBtn" type="button">Appoint deputy</button>
+            </div>
+          </div>
+          <p id="noDeputyCandidates" hidden>No warriors are eligible to become deputy.</p>
+        </section>
+
+        <section class="panel" id="leaderAppointment" hidden>
+          <h3>Choose a leader</h3>
+          <div id="leaderControls">
+            <div class="action-row">
+              <label for="leaderCandidate">Warrior</label>
+              <select id="leaderCandidate"></select>
+              <button class="button primary small" id="appointLeaderBtn" type="button">Appoint leader</button>
+            </div>
+          </div>
+          <p id="noLeaderCandidates" hidden>No warriors are eligible to become leader.</p>
+        </section>
+
         <div class="two-column">
           <section class="panel">
             <div class="panel-heading">
@@ -154,6 +178,7 @@
 
         <section id="questCard" hidden aria-labelledby="storyEventSpeaker"></section>
         <div class="territory-grid" id="territoryGrid"></div>
+        <section class="panel patrol-panel" id="medicineDen" hidden></section>
 
         <section class="panel patrol-panel">
           <div class="panel-heading">
@@ -314,6 +339,7 @@
       </div>
     </footer>
   </div>
+  <script src="js/conditions.js"></script>
   <script src="js/story-events.js"></script>
   <script src="js/gossip.js"></script>
   <script src="js/npc-ai.js"></script>
