@@ -70,7 +70,7 @@ window.StoryEvents = (() => {
     }
 
     // How likely a story event is to occur on a
-    // day when the game checks for one.
+    // day when the game checks for one
     const EVENT_CHANCE = .2;
 
     // Minimum number of days between story events
@@ -935,9 +935,7 @@ window.StoryEvents = (() => {
                 return confessor.relationships.crushes
                     .map(targetId => living.find(cat => cat.id === targetId))
                     .filter(target =>
-                        target &&
-                        target.id !== confessor.id &&
-                        target.age >= 12 &&
+                        game.canBecomeMates(confessor, target) &&
                         !(target.relationships?.mates?.length > 0) &&
 
                         // Prevent repeated confessions between this pair.

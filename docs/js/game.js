@@ -5,6 +5,9 @@
     "use strict";
 
     const SAVE_KEY = "winterclan-save-v1";
+    const DAYS_PER_MOON = 30;
+    const STARCLAN_LIMIT = 50;
+    const GRIEF_DAYS = 5;
     let NAMES = {};
 
     function mateConcern(cat, mate) {
@@ -88,6 +91,7 @@
         window.StoryEvents.initialize({
             getState: () => state,
             canStartCrush,
+            canBecomeMates,
             relationship,
             mateConcern,
             renderPortrait: renderCatPortrait,
@@ -340,8 +344,7 @@
                 if (cat) {
                     cat.health = clamp(cat.health + effect.value, 0, 100);
                     if (cat.health === 0) {
-                        cat.alive = false;
-                        updateCrushEligibility();
+                        recordDeath(cat, `${cat.name} died from their injuries.`);
                     }
                 }
             }
@@ -469,9 +472,8 @@
                 setRelationship(challenger, partner, relationship(challenger, partner) + effect.bond);
 
                 if (effect.separate) {
-                    challenger.relationships.mates = challenger.relationships.mates.filter(id => id !== partner.id);
-                    partner.relationships.mates = partner.relationships.mates.filter(id => id !== challenger.id);
-                    mateConcern(partner, challenger).pending = null;
+                    endMateTie(challenger, partner.id);
+                    endMateTie(partner, challenger.id);
                 } else if (effect.endOutsideTie) {
                     clearOutsideTie(partner, effect.interestId);
                 }
@@ -491,26 +493,7 @@
                     console.warn("Could not find cats for become_mates effect:", effect);
                     continue;
                 }
-                if (areCloseRelatives(first, second)) continue;
-
-                if (!first.relationships) first.relationships = {};
-                if (!second.relationships) second.relationships = {};
-
-                if (!Array.isArray(first.relationships.mates)) {
-                    first.relationships.mates = [];
-                }
-
-                if (!Array.isArray(second.relationships.mates)) {
-                    second.relationships.mates = [];
-                }
-
-                if (!Array.isArray(first.relationships.crushes)) {
-                    first.relationships.crushes = [];
-                }
-
-                if (!Array.isArray(second.relationships.crushes)) {
-                    second.relationships.crushes = [];
-                }
+                if (!canBecomeMates(first, second)) continue;
 
                 // Add each cat to the other's mates list.
                 if (!first.relationships.mates.includes(second.id)) {
@@ -543,6 +526,12 @@
 
     const SEASONS = ["Newleaf", "Greenleaf", "Leaf-fall", "Leaf-bare"];
     const RANKS = ["Leader", "Deputy", "Medicine Cat", "Warrior", "Apprentice", "Kit", "Elder"];
+    const MEDICINE_APPRENTICE_RANK = "Medicine Cat Apprentice";
+    const MEDICINE_APPRENTICE_LIMIT = 2;
+
+    function rankLabel(cat) {
+        return cat.rank === "Apprentice" && cat.medicineTrack ? MEDICINE_APPRENTICE_RANK : cat.rank;
+    }
 
     const LOCATIONS = [
         { id: "pinewood", name: "Pinewood Trail", emoji: "↟𖠰˚☀︎↟𖠰", desc: "A familiar path with plenty of cover and small prey.", difficulty: "Easy", risk: 1, prey: [2, 5], skill: "stealth" },
@@ -966,6 +955,7 @@
             seasonIndex: 0,
             predatorRisk: null,
             pendingFootprints: [],
+            pendingVigils: [],
             herbs: 3,
             medicineDream: null,
             disaster: null,
@@ -973,6 +963,7 @@
             prey: 9000,
             clanName: "WinterClan",
             cats: [],
+            starClan: [],
             log: [],
             playerCatId: null,
             nextBirthNumber: 1,
@@ -1140,6 +1131,177 @@
         return state.cats.filter(c => c.alive);
     }
 
+    function clanHistoryCats() {
+        return [...state.cats, ...state.starClan];
+    }
+
+    function extendGrief(cat) {
+        if (cat.griefUntilDay > state.day) {
+            cat.griefStartsDay ??= cat.griefUntilDay - GRIEF_DAYS;
+            cat.griefUntilDay += GRIEF_DAYS;
+        } else {
+            cat.griefStartsDay = state.day + 1;
+            cat.griefUntilDay = cat.griefStartsDay + GRIEF_DAYS;
+        }
+    }
+
+    function griefAffectsRecovery(cat) {
+        const start = cat.griefStartsDay ?? cat.griefUntilDay - GRIEF_DAYS;
+        return state.day >= start && state.day < cat.griefUntilDay;
+    }
+
+    function queueVigilLoss(mourner, departed) {
+        const vigils = state.pendingVigils ??= [];
+        let vigil = vigils.find(entry => entry.day === state.day && entry.mournerId === mourner.id);
+        if (!vigil) {
+            vigil = { day: state.day, mournerId: mourner.id, losses: [] };
+            vigils.push(vigil);
+        }
+
+        const memory = (mourner.memories ?? []).filter(entry =>
+            entry.participants?.includes(departed.id) && entry.description &&
+            !entry.description.includes("{") && !["clan_loss", "developed_crush"].includes(entry.event) &&
+            !entry.privateOwnerId
+        ).sort((a, b) => b.importance - a.importance || b.day - a.day)[0];
+        vigil.losses.push({
+            catId: departed.id,
+            name: departed.name,
+            cause: departed.deathCause,
+            memory: memory?.description
+        });
+    }
+
+    function recordDeath(cat, cause) {
+        if (!cat.alive) return;
+        cat.alive = false;
+        cat.health = 0;
+        cat.deathDay = state.day;
+        cat.deathCause = cause;
+        state.cats = state.cats.filter(member => member !== cat);
+        state.starClan.unshift(cat);
+        if (state.starClan.length > STARCLAN_LIMIT) state.starClan.pop();
+        state.pendingVigils = (state.pendingVigils ?? []).filter(vigil => vigil.mournerId !== cat.id);
+
+        const reactions = livingCats().map(member => {
+            const bond = relationship(member, cat);
+            let priority = 0;
+            let reaction = "sat with the clan in silence.";
+            if (member.relationships.mates?.includes(cat.id) || cat.relationships.mates?.includes(member.id)) {
+                endMateTie(member, cat.id, "death");
+                priority = 5;
+                reaction = "kept vigil beside their mate.";
+            } else if (areCloseRelatives(member, cat)) {
+                priority = 4;
+                reaction = "shared a favorite memory of their kin.";
+            } else if (member.mentorId === cat.id || cat.mentorId === member.id) {
+                priority = 3;
+                reaction = "remembered the seasons they had spent training together.";
+            } else if (member.relationships.secretPartners?.[cat.id] != null) {
+                priority = 3;
+                reaction = "stayed by the vigil long after the others had left.";
+            } else if (bond >= 65 || member.relationships.bestFriends?.includes(cat.id)) {
+                priority = 3;
+                reaction = "left a feather beside their friend's nest.";
+            } else if (bond >= 25) {
+                priority = 2;
+                reaction = "remembered the time they spent together.";
+            } else if (bond <= -20) {
+                priority = 1;
+                reaction = "quietly paid their respects despite their differences.";
+            }
+            const playerLoss = priority >= 3 && member.id === state.playerCatId;
+            const text = `${member.name} ${playerLoss ? "mourned their loss." : reaction}`;
+            if (priority >= 3) {
+                extendGrief(member);
+                if (playerLoss) queueVigilLoss(member, cat);
+                rememberEvent(member, "clan_loss", {
+                    description: `${cat.name} died. ${text}`,
+                    importance: 4,
+                    participants: [cat.id]
+                });
+            }
+            return { priority, bond, text };
+        }).sort((a, b) => b.priority - a.priority || Math.abs(b.bond) - Math.abs(a.bond));
+
+        const vigil = reactions.slice(0, 3).map(reaction => reaction.text).join(" ");
+        logEvent("loss", `${cause}${vigil ? ` The clan gathered to mourn. ${vigil}` : ""}`);
+        updateCrushEligibility();
+    }
+
+    function pendingVigil() {
+        return state.pendingVigils?.find(vigil => vigil.mournerId === state.playerCatId);
+    }
+
+    function showVigil() {
+        const vigil = pendingVigil();
+        const mourner = getCat(vigil?.mournerId);
+        if (!mourner || !$("questCard").hidden) return false;
+
+        const names = new Intl.ListFormat("en").format(vigil.losses.map(loss => loss.name));
+        const companion = !mourner.quarantined && livingCats()
+            .filter(cat => cat !== mourner && !cat.quarantined && relationship(mourner, cat) >= 25)
+            .sort((a, b) => relationship(mourner, b) - relationship(mourner, a))[0];
+        const participants = { mourner };
+        const choices = [{ id: "speak", text: "Share a remembrance" }];
+        if (companion) choices.push({ id: "sit", text: `Sit with ${companion.name}` });
+        choices.push({ id: "quiet", text: "Keep a quiet vigil" });
+
+        const dialogue = {
+            start: {
+                text: `At dusk, the clan gathers to remember ${names}. ${mourner.name} settles near the center of the clearing.`,
+                decisionMaker: "mourner",
+                choices: [{ text: "Remember what you shared", next: "loss0" }]
+            }
+        };
+        vigil.losses.forEach((loss, index) => {
+            const role = `departed${index}`;
+            participants[role] = state.starClan.find(cat => cat.id === loss.catId);
+            dialogue[`loss${index}`] = {
+                speaker: role,
+                decisionMaker: "mourner",
+                text: loss.memory
+                    ? `${loss.cause} One memory comes back to ${mourner.name}. “${loss.memory}”`
+                    : `${loss.cause} ${mourner.name} takes a moment to remember ${loss.name}.`,
+                choices: index === vigil.losses.length - 1 ? choices :
+                    [{ text: "Remember the next cat", next: `loss${index + 1}` }]
+            };
+        });
+
+        StoryEvents.showStoryEvent({ title: "The Clan Vigil", dialogue }, participants, choice => {
+            state.pendingVigils = state.pendingVigils.filter(entry => entry !== vigil);
+            const departedIds = vigil.losses.map(loss => loss.catId);
+            let description = `${mourner.name} kept a quiet vigil for ${names}.`;
+            if (choice.id === "speak") {
+                description = `${mourner.name} shared a memory of ${names} with the clan.`;
+                for (const loss of vigil.losses) {
+                    const departed = state.starClan.find(cat => cat.id === loss.catId);
+                    if (departed) {
+                        departed.vigilTribute = {
+                            mournerName: mourner.name,
+                            text: loss.memory || `${mourner.name} spoke for ${loss.name} at the vigil.`
+                        };
+                    }
+                }
+            } else if (choice.id === "sit" && companion) {
+                description = `${companion.name} sat with ${mourner.name} at the vigil for ${names}.`;
+                setRelationship(mourner, companion, relationship(mourner, companion) + 3);
+                rememberEvent(companion, "clan_vigil", {
+                    description, importance: 3, participants: [mourner.id, ...departedIds]
+                });
+            }
+            rememberEvent(mourner, "clan_vigil", {
+                description, importance: 4, participants: companion && choice.id === "sit"
+                    ? [...departedIds, companion.id] : departedIds
+            });
+            logEvent("vigil", description);
+            saveGame(false);
+            switchView("camp");
+            render();
+            showNotice(description);
+        });
+        return true;
+    }
+
     function selectedCat() {
         return getCat(selectedCatId || state.playerCatId) || livingCats()[0];
     }
@@ -1210,6 +1372,7 @@
         renderBreeding();
         renderTerritory();
         renderChronicle();
+        if (selectedView === "starclan") renderStarClan();
     }
 
     function renderStats() {
@@ -1259,6 +1422,7 @@
     }
     function renderCamp() {
         const cats = livingCats();
+        $("vigilBtn").hidden = !pendingVigil();
 
         $("campGreeting").textContent = state.day === 1
             ? "The forest is waking."
@@ -1316,6 +1480,23 @@
             .join("") || `<p class="empty-state">No clan history yet!</p>`;
     }
 
+    function renderStarClan() {
+        $("starClanCount").textContent = `${state.starClan.length} / ${STARCLAN_LIMIT} remembered`;
+        $("starClanRoster").innerHTML = state.starClan.map(cat => `
+            <article class="chronicle-entry">
+                <span class="chronicle-date">${cat.deathDay == null ? "Earlier loss" : `Day ${cat.deathDay}`}</span>
+                <div class="chronicle-text">
+                    <strong>${escapeHtml(cat.name)}</strong>
+                    <div class="chronicle-type">${escapeHtml(rankLabel(cat))} · ${ageLabel(cat.age)}</div>
+                    ${cat.deathCause ? `<div>${escapeHtml(cat.deathCause)}</div>` : ""}
+                    ${cat.vigilTribute ? `
+                        <p><strong>Remembered by ${escapeHtml(cat.vigilTribute.mournerName)}</strong><br>
+                        ${escapeHtml(cat.vigilTribute.text)}</p>` : ""}
+                </div>
+            </article>
+        `).join("") || '<p class="empty-state">No cats have joined StarClan yet.</p>';
+    }
+
     function eventHtml(e) {
         return `<div class="event-item">
       <span class="event-dot"></span>
@@ -1330,7 +1511,7 @@
         return `<div class="profile-heading">
       <div class="profile-name">${escapeHtml(c.name)}</div>
       <div class="profile-meta">
-        ${escapeHtml(c.rank)} · ${escapeHtml(c.sex)} · ${ageLabel(c.age)}
+        ${escapeHtml(rankLabel(c))} · ${escapeHtml(c.sex)} · ${ageLabel(c.age)}
       </div>
       <div class="tag-row">
       <span class="tag">${escapeHtml(c.personality)}</span>
@@ -1365,7 +1546,7 @@
         const filter = $("rankFilter").value;
 
         const cats = livingCats()
-            .filter(c => filter === "all" || c.rank === filter)
+            .filter(c => filter === "all" || rankLabel(c) === filter)
             .sort((a, b) =>
                 RANKS.indexOf(a.rank) - RANKS.indexOf(b.rank) ||
                 a.name.localeCompare(b.name)
@@ -1377,7 +1558,7 @@
             `<button class="cat-row ${c.id === (selectedCatId || state.playerCatId) ? "selected" : ""}" data-select-cat="${c.id}">
         <span class="cat-row-info">
           <span class="cat-row-name">${escapeHtml(c.name)}</span>
-          <span class="cat-row-sub">${escapeHtml(c.rank)} · ${ageLabel(c.age)}</span>
+          <span class="cat-row-sub">${escapeHtml(rankLabel(c))} · ${ageLabel(c.age)}</span>
         </span>
         <span class="cat-row-badge">${c.health < 40 ? "Unwell" : escapeHtml(c.personality)}</span>
       </button>`
@@ -1424,13 +1605,14 @@
                 ["hunting", "fighting", "stealth", "healing", "swimming", "climbing", "agility", "stamina"].includes(k)
             );
         const conditions = CatConditions.describe(c, state.day);
+        if (c.griefUntilDay > state.day) conditions.push("grieving · slower daily energy recovery");
 
         const isPlayer = c.id === state.playerCatId;
 
         return `<div class="profile-heading">
       <div class="profile-name">${escapeHtml(c.name)}</div>
       <div class="profile-meta">
-        ${escapeHtml(c.rank)} · ${escapeHtml(c.sex)} · ${ageLabel(c.age)}
+        ${escapeHtml(rankLabel(c))} · ${escapeHtml(c.sex)} · ${ageLabel(c.age)}
       </div>
       <div class="tag-row">
         <span class="tag">${escapeHtml(c.personality)}</span>
@@ -1455,6 +1637,7 @@
       }).join("")}
     </nav>
     <div id="profilePanel" tabindex="-1">
+    <br>
       ${profileView.tab === "relationships" ? profileRelationshipsHtml(c) :
           profileView.tab === "memories" ? profileMemoriesHtml(c) : profileOverviewHtml(c, skills, isPlayer)}
     </div>`;
@@ -1580,37 +1763,42 @@
     }
 
     function describeRelationship(cat, other, bond, feeling, { mate, bestFriend, rival, crush, knownAdmirer }) {
+        const past = !other.alive;
         const bondDescriptions = {
-            "close bond": "feels close to",
-            friendly: "gets along with",
-            neutral: "has a neutral bond with",
-            strained: "has a strained relationship with",
-            rivals: "has a very strained relationship with"
+            "close bond": past ? "felt close to" : "feels close to",
+            friendly: past ? "got along with" : "gets along with",
+            neutral: past ? "had a neutral bond with" : "has a neutral bond with",
+            strained: past ? "had a strained relationship with" : "has a strained relationship with",
+            rivals: past ? "had a very strained relationship with" : "has a very strained relationship with"
         };
         const name = other.name;
         let description = `${cat.name} ${bondDescriptions[relationshipLabel(bond)]} ${name}.`;
 
         if (crush && bestFriend) {
-            description = `${cat.name} has a crush on their best friend, ${name}.`;
+            description = `${cat.name} ${past ? "had" : "has"} a crush on their best friend, ${name}.`;
         } else if (mate) {
-            description = `${cat.name} and ${name} are mates.`;
+            description = other.alive
+                ? `${cat.name} and ${name} are mates.`
+                : `${name} was ${cat.name}'s mate.`;
         } else if (crush) {
-            description = `${cat.name} has a crush on ${name}.`;
+            description = `${cat.name} ${past ? "had" : "has"} a crush on ${name}.`;
         } else if (bestFriend) {
-            description = `${cat.name} considers ${name} a best friend.`;
+            description = `${cat.name} ${past ? "considered" : "considers"} ${name} a best friend.`;
         } else if (rival) {
-            description = `${cat.name} sees ${name} as a rival.`;
+            description = `${cat.name} ${past ? "saw" : "sees"} ${name} as a rival.`;
         }
 
         if (knownAdmirer) {
-            description += ` ${cat.name} knows ${name} has feelings for them.`;
+            description += past
+                ? ` ${cat.name} knew ${name} had feelings for them.`
+                : ` ${cat.name} knows ${name} has feelings for them.`;
         }
 
         const feelingDescriptions = {
-            "strong admiration": "looks up to them a great deal",
-            "mild admiration": "admires them",
-            "strong jealousy": "feels very jealous of them",
-            "mild jealousy": "feels a little jealous of them"
+            "strong admiration": past ? "looked up to them a great deal" : "looks up to them a great deal",
+            "mild admiration": past ? "admired them" : "admires them",
+            "strong jealousy": past ? "felt very jealous of them" : "feels very jealous of them",
+            "mild jealousy": past ? "felt a little jealous of them" : "feels a little jealous of them"
         };
         if (feelingDescriptions[feeling]) {
             description += ` ${cat.name} also ${feelingDescriptions[feeling]}.`;
@@ -1620,7 +1808,7 @@
             (memory.rumorStarterId ?? memory.participants?.[0]) === other.id &&
             (!memory.privateOwnerId || memory.privateOwnerId === state.playerCatId)
         )) {
-            description += ` ${cat.name} is wary of ${name} after learning who started the rumor.`;
+            description += ` ${cat.name} ${past ? "was" : "is"} wary of ${name} after learning who started the rumor.`;
         }
         return description;
     }
@@ -1629,12 +1817,13 @@
         const filters = ["All", "Family", "Friends", "Romance", "Rivals"];
         const cards = [];
 
-        for (const other of state.cats) {
+        for (const other of clanHistoryCats()) {
             if (other.id === cat.id) continue;
             const { mates, bestFriends, rivals, crushRivals } = cat.relationships;
             const bond = relationship(cat, other);
             const feeling = jealousyAdmirationLabel(jealousyAdmiration(cat, other));
-            const mate = mates?.includes(other.id);
+            const formerMate = !other.alive && other.relationships.mates?.includes(cat.id);
+            const mate = mates?.includes(other.id) || formerMate;
             const bestFriend = bestFriends?.includes(other.id);
             const rival = rivals?.includes(other.id);
             const crush = visibleCrush(cat, other);
@@ -1646,16 +1835,16 @@
                 categories.add(category);
             };
 
-            if (mate) addTie("romance", "Mate");
+            if (mate) addTie("romance", other.alive ? "Mate" : "Late Mate");
             if (cat.parents?.includes(other.id)) addTie("family", "Parent");
             if (other.parents?.includes(cat.id)) addTie("family", "Offspring");
             if (cat.parents?.some(id => other.parents?.includes(id))) {
                 const littermate = cat.bornDay != null && cat.bornDay === other.bornDay;
                 addTie("family", littermate ? "Littermate" : "Sibling");
             }
-            if (bestFriend) addTie("friends", "Best friend");
+            if (bestFriend) addTie("friends", "Best Friend");
             if (rival) addTie("rivals", "Rival");
-            if (crushRivals?.includes(other.id)) addTie("rivals", "Romantic rival");
+            if (crushRivals?.includes(other.id)) addTie("rivals", "Romantic Rival");
             if (cat.mentorId === other.id) ties.push("Mentor");
             if (other.mentorId === cat.id) ties.push("Apprentice");
             const priority = ties.length ? 1 : 0;
@@ -1694,8 +1883,9 @@
     }
 
     function profileMemoriesHtml(cat) {
-        const shared = state.cats.find(other => other.id === profileView.shared);
-        const catsById = new Map(state.cats.map(other => [other.id, other]));
+        const historyCats = clanHistoryCats();
+        const shared = historyCats.find(other => other.id === profileView.shared);
+        const catsById = new Map(historyCats.map(other => [other.id, other]));
         const memories = (cat.memories ?? []).filter(memory => {
             if (shared && !memory.participants?.includes(shared.id)) return false;
             if (memory.event !== "developed_crush" && memory.privateOwnerId &&
@@ -1710,7 +1900,9 @@
 
         function timeline(entries) {
             return `<ol class="profile-card-list memory-timeline">${entries.map(memory => {
-                const title = prettyTrait((memory.event || "Memory").replaceAll("_", " "));
+                const title = memory.event === "starclan_dream"
+                    ? "StarClan dream"
+                    : prettyTrait((memory.event || "Memory").replaceAll("_", " "));
                 const participants = (memory.participants ?? [])
                     .map(id => catsById.get(id)?.name)
                     .filter(Boolean);
@@ -1828,12 +2020,36 @@
     const CRUSH_DURATION = 20;
     const MULTIPLE_CRUSH_PERSONALITIES = ["bold", "curious", "playful"];
 
+    function romanceCooldownMoons(cat, reason) {
+        const baseMoons = reason === "death" ? 10 : 6;
+        const adjustment = MULTIPLE_CRUSH_PERSONALITIES.includes(cat.personality) ? -3 :
+            ["loyal", "wary", "stubborn"].includes(cat.personality) ? 3 : 0;
+        return baseMoons + adjustment;
+    }
+
+    function startRomanceCooldown(cat, reason, day = state.day) {
+        const readyDay = day + romanceCooldownMoons(cat, reason) * DAYS_PER_MOON;
+        cat.romanceReadyDay = Math.max(cat.romanceReadyDay ?? 0, readyDay);
+    }
+
+    function endMateTie(cat, mateId, reason, day) {
+        const rels = cat.relationships;
+        rels.mates = rels.mates.filter(id => id !== mateId);
+        if (rels.mateConcerns?.[mateId]) rels.mateConcerns[mateId].pending = null;
+        startRomanceCooldown(cat, reason, day);
+    }
+
+    function romanceWait(cat) {
+        return Math.max(0, (cat.romanceReadyDay ?? 0) - state.day);
+    }
+
     function crushLimit(cat) {
         return MULTIPLE_CRUSH_PERSONALITIES.includes(cat.personality) ? 2 : 1;
     }
 
     function canStartCrush(cat, target) {
         return canHaveCrush(cat, target) &&
+            !romanceWait(cat) &&
             !cat.relationships.mates.includes(target.id) &&
             !cat.relationships.crushes.includes(target.id) &&
             cat.relationships.crushes.length < crushLimit(cat);
@@ -1909,6 +2125,9 @@
             b.alive &&
             a.age >= 12 &&
             b.age >= 12 &&
+            !areCloseRelatives(a, b) &&
+            (a.relationships.mates.includes(b.id) || !romanceWait(a)) &&
+            (b.relationships.mates.includes(a.id) || !romanceWait(b)) &&
             (!a.relationships.mates.length ||
                 a.relationships.mates.includes(b.id)) &&
             (!b.relationships.mates.length ||
@@ -2076,7 +2295,8 @@
 
         updateBreedingPreview();
 
-        const litters = state.cats.filter(c => c.parents.length);
+        const historyCats = clanHistoryCats();
+        const litters = historyCats.filter(c => c.parents.length);
 
         $("familyNotes").innerHTML = litters.length
             ? litters.slice(-8).reverse().map(c =>
@@ -2086,7 +2306,7 @@
             <strong>${escapeHtml(c.name)}</strong> joined the clan.
             <small>
               Parents: ${c.parents.map(id =>
-                    state.cats.find(x => x.id === id)?.name || "unknown"
+                    historyCats.find(x => x.id === id)?.name || "unknown"
                 ).map(escapeHtml).join(" + ")}
               · ${geneDescription(c)}
             </small>
@@ -2140,11 +2360,22 @@
         if (a.sex === b.sex) {
             return { allowed: false, reason: "A litter requires one male and one female parent." };
         }
-        if (!canBecomeMates(a, b)) {
-            return { allowed: false, reason: "One of these cats already has another mate." };
-        }
         if (areCloseRelatives(a, b)) {
             return { allowed: false, reason: "Parents and their kits, and cats sharing a parent, cannot breed together." };
+        }
+        if (!canBecomeMates(a, b)) {
+            const waiting = [a, b].find(cat => !cat.relationships.mates.length && romanceWait(cat));
+            if (waiting) {
+                const days = romanceWait(waiting);
+                const moons = Math.floor(days / DAYS_PER_MOON);
+                const remainingDays = days % DAYS_PER_MOON;
+                const wait = [
+                    moons ? `${moons} ${moons === 1 ? "moon" : "moons"}` : "",
+                    remainingDays ? `${remainingDays} ${remainingDays === 1 ? "day" : "days"}` : ""
+                ].filter(Boolean).join(" and ");
+                return { allowed: false, reason: `${waiting.name} needs ${wait} before taking a new mate.` };
+            }
+            return { allowed: false, reason: "One of these cats already has another mate." };
         }
         for (const cat of [a, b]) {
             if (cat.health < FAMILY_RULES.minimumHealth) {
@@ -2339,7 +2570,13 @@
 
     function renderTerritory() {
         renderMedicineDen();
-        $("territoryGrid").innerHTML = LOCATIONS.map(loc =>
+        const hunter = shortHuntCandidate();
+        $("territoryGrid").innerHTML = (hunter ? `
+            <button type="button" class="location-card" id="shortHuntBtn">
+                <h3>Short hunt near camp</h3>
+                <p>${escapeHtml(hunter.name)} can bring back a small catch for the cats who need it most.</p>
+                <span class="location-difficulty">Once per day</span>
+            </button>` : "") + LOCATIONS.map(loc =>
             `<button class="location-card" data-patrol="${loc.id}">
         <span class="location-emoji">${loc.emoji}</span>
         <h3>${loc.name}</h3>
@@ -2351,7 +2588,7 @@
         const c = playerCat();
 
         $("individualModeText").textContent = c
-            ? `You are seeing the world through ${c.name}'s eyes (${c.rank}). Personal actions affect their skills, energy, wellbeing, and relationships.`
+            ? `You are seeing the world through ${c.name}'s eyes (${rankLabel(c)}). Personal actions affect their skills, energy, wellbeing, and relationships.`
             : "Choose a living cat in the Clan tab.";
     }
 
@@ -2363,9 +2600,43 @@
         return cat.conditions?.some(condition => condition.id === "greencough" && condition.stageDay <= state.day);
     }
 
-    function medicineApprenticeCandidates() {
-        return livingCats().filter(cat => cat.rank === "Apprentice" &&
-            !cat.quarantined && !getCat(cat.mentorId));
+    function medicineApprentice(healer) {
+        return livingCats().find(cat => cat.rank === "Apprentice" && cat.mentorId === healer.id);
+    }
+
+    function reservedMedicineKit(healer) {
+        const kit = getCat(healer.reservedMedicineKitId);
+        return kit?.rank === "Kit" ? kit : undefined;
+    }
+
+    function hasMedicineApprenticeSlot() {
+        const cats = livingCats();
+        const apprentices = cats.filter(cat => cat.rank === "Apprentice" && cat.medicineTrack);
+        const reservedIds = new Set(cats.filter(cat => cat.rank === "Medicine Cat")
+            .map(reservedMedicineKit).filter(Boolean).map(kit => kit.id));
+        return apprentices.length + reservedIds.size < MEDICINE_APPRENTICE_LIMIT;
+    }
+
+    function medicineKitCandidates() {
+        if (!hasMedicineApprenticeSlot()) return [];
+        const cats = livingCats();
+        const reservedIds = new Set(cats.filter(cat => cat.rank === "Medicine Cat")
+            .map(cat => cat.reservedMedicineKitId));
+        return cats.filter(cat => cat.rank === "Kit" && cat.age < 6 && !reservedIds.has(cat.id));
+    }
+
+    function medicineApprenticeCandidates(allowTransfers = false) {
+        const hasSlot = hasMedicineApprenticeSlot();
+        return livingCats().filter(cat => {
+            if (cat.rank !== "Apprentice" || cat.quarantined) return false;
+            const mentor = getCat(cat.mentorId);
+            return cat.medicineTrack ? mentor?.rank !== "Medicine Cat" : hasSlot && (allowTransfers || !mentor);
+        });
+    }
+
+    function canChooseMedicineApprentice(healer) {
+        return healer?.rank === "Medicine Cat" && !healer.quarantined && healer.health >= 35 &&
+            !medicineApprentice(healer) && !reservedMedicineKit(healer);
     }
 
     function assignMedicineApprentice(healer, apprentice) {
@@ -2388,7 +2659,7 @@
         return message;
     }
 
-    function diagnosePatient(healer, patient) {
+    function diagnosePatient(healer, patient, logDiagnosis = true) {
         const visible = (patient.conditions ?? []).filter(condition => condition.stageDay <= state.day);
         const newFindings = visible.filter(condition =>
             condition.diagnosedSeverity !== condition.severity || condition.diagnosedStageDay !== condition.stageDay);
@@ -2406,7 +2677,7 @@
         if (healer.skills.healing >= 10) healer.diagnosisExperience = 0;
         const findings = CatConditions.describe(patient, state.day).join("; ");
         const message = `${healer.name} examined ${patient.name}. ${findings || "No active injury or illness found"}.`;
-        if (newFindings.length) logEvent("diagnosis", message);
+        if (logDiagnosis && newFindings.length) logEvent("diagnosis", message);
         return message;
     }
 
@@ -2438,16 +2709,21 @@
         const cats = livingCats();
         const treatment = CatConditions.patientsNeedingTreatment(cats, state.day);
         const patients = cats.filter(cat => needsIsolation(cat) || cat.quarantined);
-        const apprentice = cats.find(cat => cat.rank === "Apprentice" && cat.mentorId === healer.id);
+        const apprentice = medicineApprentice(healer);
+        const reservedKit = reservedMedicineKit(healer);
         const unavailable = healer.quarantined || healer.health < 35;
         const button = (action, label, cat, disabled = false) =>
-            `<button type="button" data-medicine-action="${action}" data-patient="${escapeHtml(cat.id)}"${disabled ? " disabled" : ""}>${label}</button>`;
+            `<button type="button" class="button primary" data-medicine-action="${action}" data-patient="${escapeHtml(cat.id)}"${disabled ? " disabled" : ""}>${label}</button>`;
+        const choices = apprentice || reservedKit ? "" : [
+            ...medicineKitCandidates().map(cat => button("reserve-kit", `Reserve ${escapeHtml(cat.name)}`, cat, unavailable)),
+            ...medicineApprenticeCandidates(true).map(cat => button("apprentice", `Choose ${escapeHtml(cat.name)}`, cat, unavailable))
+        ].join("");
 
         den.innerHTML = `
-            <h2>Medicine Den</h2>
-            <p>Herbs in store <strong>${state.herbs}</strong> · Healing <strong>${healer.skills.healing ?? 0}/10</strong>
-            ${(healer.skills.healing ?? 0) < 10 ? ` · Diagnosis experience ${healer.diagnosisExperience ?? 0}/3` : ""}</p>
-            <p>Join a territory patrol to gather herbs once per day.</p>
+            <h2>Medicine Cat Den</h2>
+            <p>Herbs in Storage: <strong>${state.herbs}</strong> · Healing: <strong>${healer.skills.healing ?? 0}/10</strong>
+            ${(healer.skills.healing ?? 0) < 10 ? ` · Diagnostic Experience: ${healer.diagnosisExperience ?? 0}/3` : ""}</p>
+            <p>Each medicine cat can gather herbs once per day. <br>Diagnose illnesses and injuries to level up healing skill.</p>
             ${unavailable ? "<p>Rest until you can care for other cats again.</p>" : ""}
             <h3>Patients</h3>
             ${patients.map(cat => {
@@ -2468,10 +2744,15 @@
                 </div>`;
             }).join("") || "<p>No cats need care today.</p>"}
             <h3>Apprentice</h3>
-            ${apprentice ? `<p>${escapeHtml(apprentice.name)} is training with you.</p>` :
-                medicineApprenticeCandidates().map(cat =>
-                    button("apprentice", `Choose ${escapeHtml(cat.name)}`, cat, unavailable)).join(" ") ||
-                "<p>No unassigned apprentices are available.</p>"}
+            ${apprentice ? `<p>${escapeHtml(apprentice.name)} is training with you.</p>` : reservedKit ? `
+                <p>You privately chose ${escapeHtml(reservedKit.name)}. The clan will learn of your choice when the kit turns 6 moons old.</p>
+                ${button("cancel-reservation", "Cancel reservation", reservedKit, unavailable)}
+            ` : choices ? `
+                <p>Reserve a kit privately or choose an apprentice to start medicine cat training now.</p>
+                <div class="profile-controls">${choices}</div>
+            ` : hasMedicineApprenticeSlot()
+                ? "<p>No kits or apprentices are available.</p>"
+                : `<p>All ${MEDICINE_APPRENTICE_LIMIT} medicine cat apprentice slots are filled.</p>`}
         `;
     }
 
@@ -2491,8 +2772,15 @@
             message = setQuarantine(cat, true);
         } else if (action === "release" && cat.quarantined) {
             message = setQuarantine(cat, false);
-        } else if (action === "apprentice" && medicineApprenticeCandidates().includes(cat) &&
-            !livingCats().some(other => other.rank === "Apprentice" && other.mentorId === healer.id)) {
+        } else if (action === "reserve-kit" && canChooseMedicineApprentice(healer) &&
+            medicineKitCandidates().includes(cat)) {
+            healer.reservedMedicineKitId = cat.id;
+            message = "Kit reserved privately.";
+        } else if (action === "cancel-reservation" && reservedMedicineKit(healer) === cat) {
+            delete healer.reservedMedicineKitId;
+            message = "Apprentice reservation canceled.";
+        } else if (action === "apprentice" && canChooseMedicineApprentice(healer) &&
+            medicineApprenticeCandidates(true).includes(cat)) {
             message = assignMedicineApprentice(healer, cat);
         }
 
@@ -2504,13 +2792,15 @@
 
     function runMedicineCatDay() {
         const cats = livingCats();
+        const healers = cats.filter(cat => cat.rank === "Medicine Cat");
+        const selectionChance = 0.2 ** Math.max(0, healers.length - 1);
         const busy = new Set();
         for (const cat of cats) {
             if (cat.quarantined && !needsIsolation(cat)) setQuarantine(cat, false);
         }
 
-        for (const healer of cats.filter(cat => cat.rank === "Medicine Cat" && cat.id !== state.playerCatId)) {
-            if (healer.health < 35 || healer.energy < 20) continue;
+        for (const healer of healers) {
+            if (healer.id === state.playerCatId || healer.health < 35 || healer.energy < 20) continue;
             const accessible = healer.quarantined ? [healer] : cats;
             for (const cat of accessible) {
                 if (!cat.quarantined && hasGreencough(cat)) {
@@ -2521,7 +2811,7 @@
             const patients = healer.quarantined ? [healer] : cats;
             const patient = CatConditions.patientsNeedingTreatment(patients, state.day)[0];
             if (patient) {
-                diagnosePatient(healer, patient.cat);
+                diagnosePatient(healer, patient.cat, false);
                 busy.add(healer.id);
             }
             if (!healer.quarantined && state.herbs < 3) {
@@ -2532,12 +2822,15 @@
             }
             if (patient && state.herbs && healer.lastTreatmentDay !== state.day) treatPatient(healer, patient);
 
-            if (!healer.quarantined && !cats.some(cat => cat.rank === "Apprentice" && cat.mentorId === healer.id)) {
-                const candidates = medicineApprenticeCandidates().sort((a, b) =>
+            if (canChooseMedicineApprentice(healer)) {
+                const kits = medicineKitCandidates();
+                const candidates = (kits.length ? kits : medicineApprenticeCandidates()).sort((a, b) =>
                     (b.skills.healing ?? 0) - (a.skills.healing ?? 0) ||
                     (b.faith ?? 50) - (a.faith ?? 50));
-                if (candidates.length) {
-                    assignMedicineApprentice(healer, candidates[0]);
+                const candidate = candidates[0];
+                if (candidate && (candidate.medicineTrack || selectionChance === 1 || chance(selectionChance))) {
+                    if (candidate.rank === "Kit") healer.reservedMedicineKitId = candidate.id;
+                    else assignMedicineApprentice(healer, candidate);
                     busy.add(healer.id);
                 }
             }
@@ -2551,9 +2844,15 @@
         state.medicineDream = null;
         state.disaster = { ...dream, warnClan };
         const healer = getCat(dream.healerId);
-        const message = warnClan
+        const response = warnClan
             ? `${healer.name} warned the clan about a coming flood. The clan began preparing.`
             : `${healer.name} kept the warning private and prepared for the flood alone.`;
+        const message = dream.omen ? `${dream.omen} ${response}` : response;
+        rememberEvent(healer, "flood_omen", {
+            description: dream.omen ? message : `${healer.name} dreamed of floodwater rising through the camp. ${response}`,
+            importance: 4,
+            participants: dream.visitorId ? [dream.visitorId] : []
+        });
         logEvent("dream", message);
         saveGame(false);
         return message;
@@ -2579,7 +2878,7 @@
 
         StoryEvents.showStoryEvent({
             title: "A Warning in Water",
-            description: `${healer.name} dreams of floodwater rising through the camp. Will they warn the clan or prepare alone?`,
+            description: `${dream.omen ?? `${healer.name} dreamed of floodwater rising through the camp.`} Will ${healer.name} warn the clan or prepare alone?`,
             decisionMaker: "healer",
             choices: [
                 { id: "warn_clan", text: "Warn the clan" },
@@ -2598,11 +2897,23 @@
         for (const healer of livingCats().filter(cat => cat.rank === "Medicine Cat")) {
             if (!chance(clamp(healer.faith ?? 50, 0, 100) * .002)) continue;
             state.nextDreamDay = state.day + 10;
+            const visitor = state.starClan.length ? pick(state.starClan) : null;
             if (!chance(.65)) {
-                logEvent("dream", `${healer.name} dreamed of stars reflected in still water and woke without a clear omen.`);
+                const description = visitor
+                    ? `${visitor.name} visited ${healer.name} in a dream. They sat together under the stars until dawn.`
+                    : `${healer.name} dreamed of stars reflected in still water and woke without a clear omen.`;
+                rememberEvent(healer, visitor ? "starclan_dream" : "dream", {
+                    description,
+                    importance: 3,
+                    participants: visitor ? [visitor.id] : []
+                });
+                logEvent("dream", description);
                 return false;
             }
-            state.medicineDream = { healerId: healer.id, day: state.day + rand(2, 4) };
+            const omen = visitor
+                ? `${visitor.name} appeared in ${healer.name}'s dream and showed them floodwater rising through the camp.`
+                : `${healer.name} dreamed of floodwater rising through the camp.`;
+            state.medicineDream = { healerId: healer.id, day: state.day + rand(2, 4), omen, visitorId: visitor?.id };
             return showMedicineDream();
         }
         return false;
@@ -2613,48 +2924,58 @@
         if (!disaster || disaster.day > state.day) return "";
         state.disaster = null;
 
-        const message = "Floodwater swept through camp before dawn.";
-        logEvent("disaster", message);
-        let casualties = 0;
+        const report = ["Floodwater swept through camp before dawn."];
+        const deaths = [];
         for (const cat of livingCats()) {
             const prepared = disaster.warnClan || cat.id === disaster.healerId;
             const roll = Math.random();
             if (roll < (prepared ? .005 : .025)) {
-                casualties++;
-                cat.health = 0;
-                cat.alive = false;
-                logEvent("loss", `${cat.name} died in the flood.`);
+                deaths.push(cat.name);
+                recordDeath(cat, `${cat.name} died in the flood.`);
             } else if (roll < (prepared ? .09 : .30)) {
-                casualties++;
                 cat.health = Math.max(1, cat.health - rand(8, 20));
-                CatConditions.add(cat, chance(.25) ? "brokenLeg" : "scrape", state.day, logEvent);
-                logEvent("disaster", `${cat.name} was injured while escaping the flood.`);
+                const recorded = CatConditions.add(cat, chance(.25) ? "brokenLeg" : "scrape", state.day,
+                    (type, message) => report.push(message));
+                if (!recorded) report.push(`${cat.name} was hurt escaping the flood.`);
             }
         }
-        const result = casualties ? `${casualties} ${casualties === 1 ? "cat was" : "cats were"} hurt or killed.` :
-            "Every cat escaped safely.";
-        logEvent("disaster", result);
-        return `${message} ${result}`;
+        if (report.length === 1 && deaths.length === 0) report.push("Every cat escaped safely.");
+        const summary = report.join(" ");
+        logEvent("disaster", summary);
+        return deaths.length ? `${summary} ${new Intl.ListFormat("en").format(deaths)} died in the flood.` : summary;
     }
 
     function runPatrol(locationId) {
         const loc = LOCATIONS.find(l => l.id === locationId);
         if (!loc) return;
 
+        const player = playerCat();
         const candidates = livingCats().filter(canPatrol);
 
         if (candidates.length < 1) {
-            showNotice("No healthy cats are ready to patrol. Let the clan rest first.");
+            showNotice(shortHuntCandidate()
+                ? "No cats are ready for a regular patrol. Try a short hunt near camp."
+                : "No cats are ready for another patrol today. Let the clan rest.");
             return;
         }
 
         const patrol = candidates
             .sort((a, b) =>
-                Number(b === playerCat() && b.rank === "Medicine Cat") -
-                Number(a === playerCat() && a.rank === "Medicine Cat") ||
+                Number(b === player && b.rank === "Medicine Cat") -
+                Number(a === player && a.rank === "Medicine Cat") ||
                 CatConditions.skill(b, loc.skill) - CatConditions.skill(a, loc.skill))
             .slice(0, 3);
-        const result = resolvePatrol(loc, patrol);
+        const healer = player?.rank === "Medicine Cat" && player.lastHerbDay === state.day
+            ? player
+            : patrol.find(cat => cat.rank === "Medicine Cat");
+        if (healer?.lastHerbDay === state.day && healer.lastHerbNoticeDay !== state.day) {
+            healer.lastHerbNoticeDay = state.day;
+            saveGame(false);
+            showNotice(`${healer.name} has already gathered herbs today. Choose a patrol to continue.`);
+            return;
+        }
+
+        const result = resolvePatrol(loc, patrol, healer?.lastHerbDay !== state.day ? healer : undefined);
         saveGame(false);
         showNotice(result);
         render();
@@ -2664,7 +2985,39 @@
         return cat.age >= 6 && cat.health > 20 && cat.energy > 15 && !cat.quarantined;
     }
 
-    function resolvePatrol(loc, patrol) {
+    function shortHuntCandidate() {
+        const cats = livingCats();
+        if (state.lastShortHuntDay === state.day || cats.some(canPatrol)) return null;
+        return cats.filter(cat => cat.age >= 6 && cat.health > 0 && !cat.quarantined)
+            .sort((a, b) => b.health - a.health || b.energy - a.energy)[0];
+    }
+
+    function runShortHunt() {
+        const hunter = shortHuntCandidate();
+        if (!hunter) return;
+
+        state.lastShortHuntDay = state.day;
+        hunter.energy = Math.max(0, hunter.energy - 5);
+        const portions = rand(2, 4);
+        const fed = livingCats().filter(cat => cat.hunger > 35)
+            .sort((a, b) => a.health - b.health || b.hunger - a.hunger)
+            .slice(0, portions);
+        for (const cat of fed) {
+            cat.hunger = Math.max(0, cat.hunger - rand(45, 55));
+        }
+        state.prey += portions - fed.length;
+
+        const meals = fed.length
+            ? ` ${new Intl.ListFormat("en").format(fed.map(cat => cat.name))} ate first.`
+            : " The catch went to the prey pile.";
+        const message = `${hunter.name} brought back ${portions} prey from a short hunt near camp.${meals}`;
+        logEvent("patrol", message);
+        saveGame(false);
+        render();
+        showNotice(message);
+    }
+
+    function resolvePatrol(loc, patrol, healer) {
         CatConditions.recordContact(patrol, "patrol", state.day);
 
         patrol.forEach(c => {
@@ -2689,7 +3042,6 @@
 
         let result;
 
-        const healer = patrol.find(cat => cat.rank === "Medicine Cat");
         if (healer) {
             result = gatherHerbs(healer, loc);
         } else if (loc.id === "moonpool") {
@@ -2719,9 +3071,12 @@
 
             cat.health = clamp(cat.health - damage, 0, 100);
 
-            result = `${patrol.map(c => c.name).join(", ")} struggled on ${loc.name}. ${cat.name} returned scratched and shaken (-${damage} health).`;
+            result = `${patrol.map(c => c.name).join(", ")} struggled on ${loc.name}. ${cat.name} ${cat.health === 0
+                ? "died from their injuries."
+                : `returned scratched and shaken (-${damage} health).`}`;
 
             logEvent("patrol", result);
+            if (cat.health === 0) recordDeath(cat, `${cat.name} died from their patrol injuries.`);
         }
 
         return result;
@@ -3063,6 +3418,23 @@
 
 
 
+    function promoteKit(cat) {
+        if (cat.rank !== "Kit" || cat.age < 6) return false;
+        updateCatName(cat);
+        cat.rank = "Apprentice";
+        const healer = livingCats().find(member => member.rank === "Medicine Cat" &&
+            member.reservedMedicineKitId === cat.id);
+        if (healer) {
+            delete healer.reservedMedicineKitId;
+        }
+        if (healer && hasMedicineApprenticeSlot()) {
+            assignMedicineApprentice(healer, cat);
+        } else {
+            logEvent("rank", `${cat.name} is old enough to begin apprentice training.`);
+        }
+        return true;
+    }
+
     function advanceMoon() {
         livingCats().forEach(c => {
             // Dead cats don't age.
@@ -3071,17 +3443,7 @@
             // Age the cat by one moon.
             c.age += 1;
 
-            // Update the name to match the new age.
-            updateCatName(c);
-
-            // Promote kits to apprentices at 6 moons.
-            if (c.age >= 6 && c.rank === "Kit") {
-                c.rank = "Apprentice";
-                logEvent(
-                    "rank",
-                    `${c.name} is old enough to begin apprentice training.`
-                );
-            }
+            if (!promoteKit(c)) updateCatName(c);
 
             if (c.age >= 12 && c.rank === "Apprentice") {
                 graduateApprentice(c);
@@ -3393,6 +3755,7 @@
     }
 
     function autonomousDay() {
+        if (showVigil()) return;
         if (state.medicineDream && showMedicineDream()) return;
         // Advance daily clock
         state.day++;
@@ -3400,7 +3763,7 @@
         const medicineDuty = runMedicineCatDay();
         CatConditions.advanceDay(livingCats(), state.day, logEvent, (cat, description) => {
             rememberEvent(cat, "healed_with_a_limp", { importance: 4, description });
-        });
+        }, recordDeath);
         const footprintsOutcomes = resolvePendingFootprints();
         const cats = livingCats();
         updateCrushEligibility();
@@ -3415,8 +3778,7 @@
             window.SocialReactions.fadeJealousyAdmiration(cat);
         });
 
-        // Advance moon clock after 30 days
-        if (state.dayOfMoon >= 30) {
+        if (state.dayOfMoon >= DAYS_PER_MOON) {
             state.dayOfMoon = 0;
             state.moon += 1;
             advanceMoon();
@@ -3438,7 +3800,8 @@
 
         cats.forEach(c => {
 
-            c.energy = clamp(c.energy + rand(8, 22), 0, 100);
+            const recovery = rand(8, 22);
+            c.energy = clamp(c.energy + (griefAffectsRecovery(c) ? Math.floor(recovery / 2) : recovery), 0, 100);
             c.hunger = clamp(c.hunger + rand(10, 18), 0, 100);
 
             if (state.prey > 0 && c.hunger > 35) {
@@ -3453,10 +3816,7 @@
             }
 
             // Age-based rank progression.
-            if (c.age >= 6 && c.rank === "Kit") {
-                c.rank = "Apprentice";
-                logEvent("rank", `${c.name} is old enough to begin apprentice training.`);
-            }
+            promoteKit(c);
 
             if (c.age >= 12 && c.rank === "Apprentice") {
                 graduateApprentice(c);
@@ -3468,8 +3828,7 @@
             }
 
             if (c.health <= 0) {
-                c.alive = false;
-                logEvent("loss", `${c.name} died after their health failed. Their story remains in the clan chronicle.`);
+                recordDeath(c, `${c.name} died after their health failed.`);
             }
         });
 
@@ -3480,15 +3839,13 @@
                 (!medicineDuty.has(cat.id) || cat.quarantined)) {
                 window.NPC.performNpcActivity(cat);
                 if (cat.health <= 0) {
-                    cat.alive = false;
-                    logEvent("loss", `${cat.name} died after their health failed. Their story remains in the clan chronicle.`);
+                    recordDeath(cat, `${cat.name} died after their health failed.`);
                 }
             }
         }
 
         resolveLeadershipVacancy();
         // Give an apprentice a chance to train each day
-        if (cats.some(cat => !cat.alive)) updateCrushEligibility();
         apprenticeTrainingEvent();
         updateFamilies();
         const giftStoryActive = advanceGiftStory();
@@ -3740,10 +4097,13 @@
             !(c.age < 6 && r !== "Kit") &&
             !(c.age >= 6 && c.age < 12 && !["Apprentice", "Kit"].includes(r))
         );
+        if (canChooseMedicineApprentice(playerCat()) && medicineApprenticeCandidates(true).includes(c)) {
+            options.push(MEDICINE_APPRENTICE_RANK);
+        }
 
         const next = prompt(
             `Change ${c.name}'s rank. Available ranks: ${options.join(", ")}\nEnter a rank exactly:`,
-            c.rank
+            rankLabel(c)
         );
 
         if (!next) return;
@@ -3757,6 +4117,15 @@
             return;
         }
 
+        if (normalized === MEDICINE_APPRENTICE_RANK) {
+            handleMedicineAction("apprentice", c.id);
+            return;
+        }
+        if (c.rank === "Medicine Cat" && normalized !== c.rank) delete c.reservedMedicineKitId;
+        if (c.medicineTrack && (c.rank === "Apprentice" || normalized === "Apprentice")) {
+            delete c.medicineTrack;
+            delete c.mentorId;
+        }
         c.rank = normalized;
         logEvent("rank", `${c.name} is now recognized as ${normalized.toLowerCase()}.`);
         resolveLeadershipVacancy();
@@ -3778,6 +4147,28 @@
         }
     }
 
+    function applyMedicineApprenticeLimit(cats) {
+        const apprentices = cats.filter(cat => cat.rank === "Apprentice" && cat.medicineTrack)
+            .sort((a, b) => b.age - a.age);
+        for (const cat of apprentices.slice(MEDICINE_APPRENTICE_LIMIT)) {
+            delete cat.medicineTrack;
+            delete cat.mentorId;
+            logEvent("training", `${cat.name} returned to warrior training because the medicine cat apprentice slots were filled.`);
+        }
+
+        let openSlots = Math.max(0, MEDICINE_APPRENTICE_LIMIT - apprentices.length);
+        const reservedIds = new Set();
+        for (const healer of cats.filter(cat => cat.rank === "Medicine Cat" && cat.reservedMedicineKitId)) {
+            const kit = reservedMedicineKit(healer);
+            if (!kit || medicineApprentice(healer) || reservedIds.has(kit.id) || openSlots === 0) {
+                delete healer.reservedMedicineKitId;
+            } else {
+                reservedIds.add(kit.id);
+                openSlots--;
+            }
+        }
+    }
+
 
     function loadGame() {
         try {
@@ -3791,17 +4182,24 @@
             }
             loaded.predatorRisk ??= null;
             loaded.pendingFootprints ??= [];
+            loaded.pendingVigils ??= [];
             loaded.herbs ??= 3;
             loaded.medicineDream ??= null;
             loaded.disaster ??= null;
             loaded.nextDreamDay ??= loaded.day + 1;
 
+            const legacyDeaths = loaded.cats.filter(cat => cat.alive === false).reverse();
+            const archivedCats = [...(loaded.starClan ?? []), ...legacyDeaths];
+            loaded.starClan = archivedCats.slice(0, STARCLAN_LIMIT);
+            loaded.cats = loaded.cats.filter(cat => cat.alive !== false);
+            const historyCats = [...loaded.cats, ...loaded.starClan];
+
             // Fill in defaults for stats added in newer versions.
-            loaded.cats.forEach(cat => {
+            historyCats.forEach(cat => {
                 cat.fertility ??= rand(60, 90);
                 cat.lastBreedingAttemptDay ??= null;
                 if (cat.lastLitterDay == null) {
-                    const birthDays = loaded.cats
+                    const birthDays = historyCats
                         .filter(child => child.parents?.includes(cat.id) && Number.isFinite(child.bornDay))
                         .map(child => child.bornDay);
                     cat.lastLitterDay = birthDays.length ? Math.max(...birthDays) : null;
@@ -3861,8 +4259,38 @@
             });
 
             state = loaded;
-            updateCrushEligibility();
             const cats = livingCats();
+            applyMedicineApprenticeLimit(cats);
+            const livingIds = new Set(cats.map(cat => cat.id));
+            const deathsById = new Map(archivedCats.map(cat => [cat.id, cat]));
+            for (const cat of cats) {
+                // Extend active cooldowns saved when the same durations were measured in days.
+                if (romanceWait(cat) && !cat.relationships.mates.length) {
+                    for (const memory of cat.memories) {
+                        const death = memory.event === "clan_loss" &&
+                            memory.description?.endsWith("kept vigil beside their mate.");
+                        if (!death && memory.event !== "mates_separated") continue;
+                        const reason = death ? "death" : "breakup";
+                        if (memory.day + romanceCooldownMoons(cat, reason) === cat.romanceReadyDay) {
+                            startRomanceCooldown(cat, reason, memory.day);
+                            break;
+                        }
+                    }
+                }
+                for (const mateId of cat.relationships.mates) {
+                    if (livingIds.has(mateId)) continue;
+                    const death = deathsById.get(mateId);
+                    const deathDay = death?.deathDay ?? (death && loaded.log?.find(event =>
+                        event.type === "loss" && event.text.startsWith(`${death.name} died`))?.day);
+                    if (Number.isFinite(deathDay)) endMateTie(cat, mateId, "death", deathDay);
+                    else cat.relationships.mates = cat.relationships.mates.filter(id => id !== mateId);
+                }
+                if (!cat.relationships.mates.length && cat.romanceReadyDay == null) {
+                    const separation = cat.memories.findLast(memory => memory.event === "mates_separated");
+                    if (Number.isFinite(separation?.day)) startRomanceCooldown(cat, "breakup", separation.day);
+                }
+            }
+            updateCrushEligibility();
             cats.forEach((cat, index) => {
                 cat.relationships.rivals = [];
                 for (const other of cats.slice(0, index)) updateRivalry(cat, other);
@@ -3923,6 +4351,7 @@
         if (view === "clan") renderRoster();
         if (view === "breeding") renderBreeding();
         if (view === "territory") renderTerritory();
+        if (view === "starclan") renderStarClan();
     }
 
     function bindEvents() {
@@ -3937,6 +4366,7 @@
         });
 
         $("advanceDayBtn").addEventListener("click", autonomousDay);
+        $("vigilBtn").addEventListener("click", showVigil);
         $("appointDeputyBtn").addEventListener("click", () => {
             const message = appointDeputy(playerCat(), getCat($("deputyCandidate").value));
             if (!message) return;
@@ -3970,6 +4400,10 @@
         });
 
         document.body.addEventListener("click", e => {
+            if (e.target.closest("#shortHuntBtn")) {
+                runShortHunt();
+                return;
+            }
             const medicineAction = e.target.closest("[data-medicine-action]");
             if (medicineAction) {
                 handleMedicineAction(medicineAction.dataset.medicineAction, medicineAction.dataset.patient);

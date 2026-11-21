@@ -94,7 +94,7 @@ body {
 .story-dialogue .story-event-card {
   position: relative;
   padding: 0 clamp(14px, 4vw, 24px) 27px;
-  border: 3px dotted var(--ink);
+  border: 3px solid var(--ink);
   border-radius: 10px;
   background: var(--paper);
 }
@@ -217,18 +217,18 @@ h3 {
 }
 
 .pill {
-  border: 1px solid #577365;
+  border: 1px solid #494d7e;
   border-radius: 99px;
   padding: 8px 12px;
-  color: #e7eee4;
+  color: #f0ebe3;
   font-size: 0.8rem;
   white-space: nowrap;
 }
 
 .button {
   background: #f7f5eb;
-  border: 1px solid #d4d9ca;
-  color: var(--cool-gray);
+  border: 1px solid #d08159;
+  color: var(--muted);
   padding: 10px 15px;
   border-radius: 10px;
   font-weight: 800;
@@ -237,7 +237,7 @@ h3 {
     background 0.12s ease;
 }
 
-.button:hover {
+.button:enabled:hover {
   transform: translateY(-1px);
   background: #fff;
 }
@@ -248,8 +248,12 @@ h3 {
   color: #272744;
 }
 
-.button.primary:hover {
+.button.primary:enabled:hover {
   background: #8b6d9c;
+}
+.button.primary:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 .button.small {
   padding: 7px 10px;
@@ -495,12 +499,13 @@ main {
 .roster-panel {
   padding: 16px;
 }
+
 .count {
   font:
     500 0.72rem "DM Mono",
     monospace;
   color: var(--muted);
-  background: #edf0e7;
+  background: #f0ebe3;
   padding: 4px 7px;
   border-radius: 6px;
 }
@@ -530,19 +535,19 @@ input {
   border: 1px solid transparent;
   border-radius: 11px;
   padding: 9px;
-  background: #f8f7ef;
+  background: #f5f0e9;
   text-align: left;
   color: var(--ink);
   width: 100%;
 }
 
 .cat-row:hover {
-  border-color: #c9d7c5;
-  background: #f0f4eb;
+  border-color: #92929c;
+  background: #f0ebe3;
 }
 .cat-row.selected {
-  border-color: #93ae8b;
-  background: #e8f0e3;
+  border-color: #8b6d9c;
+  background: #f0ebe3;
 }
 
 .cat-avatar {
@@ -573,8 +578,8 @@ input {
   font-size: 0.67rem;
   padding: 4px 6px;
   border-radius: 6px;
-  background: #e7eadf;
-  color: #526252;
+  background: #f0ebe3;
+  color: #272744;
 }
 
 .detail-panel {
@@ -639,12 +644,12 @@ input {
 }
 
 .tag {
-  background: #e8eee2;
-  color: #3e5b48;
+  background: #c69fa5;
+  color: #272744;
   border-radius: 7px;
   padding: 5px 8px;
   font-size: 0.75rem;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .profile-section {

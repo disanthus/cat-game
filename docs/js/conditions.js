@@ -4,26 +4,26 @@ window.CatConditions = (() => {
         scrape: {
             name: "Scrape",
             initialSeverity: "mild",
-            mild: { treatment: "clean the scrape", success: .75, recovery: 1, natural: 3 }
+            mild: { treatment: "clean the scrape", success: .75, recovery: [1, 2], natural: [2, 4] }
         },
         brokenLeg: {
             name: "Broken leg",
             initialSeverity: "serious",
             serious: {
-                treatment: "set and splint the leg", success: .5, recovery: 4, natural: 7,
+                treatment: "set and splint the leg", success: .5, recovery: [3, 6], natural: [6, 9],
                 deadline: 3, penalties: { agility: 2, climbing: 2 }
             }
         },
         greencough: {
             name: "Greencough",
             initialSeverity: "mild",
-            mild: { treatment: "provide rest and supportive care", success: .7, recovery: 2, worsensAfter: 3 },
+            mild: { treatment: "provide rest and supportive care", success: .7, recovery: [1, 3], worsensAfter: 3 },
             serious: {
-                treatment: "give greencough medicine", success: .55, recovery: 3, worsensAfter: 3,
+                treatment: "give greencough medicine", success: .55, recovery: [3, 5], worsensAfter: 3,
                 damage: 3, penalties: { stamina: 1 }
             },
             severe: {
-                treatment: "give medicine and tend to breathing", success: .35, recovery: 4, natural: 10,
+                treatment: "give medicine and tend to breathing", success: .35, recovery: [4, 7], natural: [8, 12],
                 damage: 12, penalties: { stamina: 3 }
             }
         }
@@ -36,6 +36,10 @@ window.CatConditions = (() => {
     const contactRisk = { conversation: .035, patrol: .08, close: .12 };
     const conditionRules = condition => definitions[condition.id][condition.severity];
 
+    function rollDuration([minimum, maximum]) {
+        return minimum + Math.floor(Math.random() * (maximum - minimum + 1));
+    }
+
     function add(cat, id, day, log, incubation = 0) {
         const definition = definitions[id];
         if (!definition || cat.alive === false || cat.conditions?.some(condition => condition.id === id)) {
@@ -47,6 +51,7 @@ window.CatConditions = (() => {
             id,
             severity: definition.initialSeverity,
             stageDay: day + incubation,
+            pendingOnset: incubation > 0,
             recoveryDay: null,
             treatedDay: null
         });
@@ -111,25 +116,32 @@ window.CatConditions = (() => {
         const target = healer === cat ? "themself" : cat.name;
         if (success) {
             condition.treatedDay = day;
-            condition.recoveryDay = day + rules.recovery;
+            condition.recoveryDay = day + rollDuration(rules.recovery);
             return `${healer.name} managed to ${rules.treatment} for ${target}. Recovery has begun.`;
         } else {
             return `${healer.name} tried to ${rules.treatment} for ${target}, but the treatment didn't take.`;
         }
     }
 
-    function progress(cat, condition, day, log, rememberLimp) {
+    function progress(cat, condition, day, log, rememberLimp, recordDeath) {
         const definition = definitions[condition.id];
         const elapsed = day - condition.stageDay;
         if (elapsed < 0) return true;
         if (elapsed === 0) {
-            log("condition", `${cat.name} began showing signs of ${definition.name.toLowerCase()}.`);
+            if (condition.pendingOnset ?? (condition.id === "greencough")) {
+                condition.pendingOnset = false;
+                log("condition", `${cat.name} began showing signs of ${definition.name.toLowerCase()}.`);
+            }
             return true;
         }
 
         const rules = conditionRules(condition);
         const recovering = condition.recoveryDay !== null;
-        if (recovering ? day >= condition.recoveryDay : elapsed >= rules.natural) {
+        if (!recovering && rules.natural) {
+            condition.naturalRecoveryDay ??= condition.stageDay + rollDuration(rules.natural);
+        }
+        const recoveryDay = recovering ? condition.recoveryDay : condition.naturalRecoveryDay;
+        if (day >= recoveryDay) {
             if (condition.id === "brokenLeg") {
                 const lateTreatment = condition.treatedDay === null ||
                     condition.treatedDay > condition.stageDay + rules.deadline;
@@ -150,26 +162,26 @@ window.CatConditions = (() => {
         if (rules.damage) {
             cat.health = Math.max(0, cat.health - rules.damage);
             if (cat.health === 0) {
-                cat.alive = false;
-                log("loss", `${cat.name} died from ${definition.name.toLowerCase()}.`);
+                recordDeath(cat, `${cat.name} died from ${definition.name.toLowerCase()}.`);
                 return true;
             }
         }
         if (elapsed >= rules.worsensAfter) {
             condition.severity = condition.severity === "mild" ? "serious" : "severe";
             condition.stageDay = day;
+            delete condition.naturalRecoveryDay;
             log("condition", `${cat.name}'s ${definition.name.toLowerCase()} became ${condition.severity}.`);
         }
         return true;
     }
 
-    function advanceDay(cats, day, log, rememberLimp) {
+    function advanceDay(cats, day, log, rememberLimp, recordDeath) {
         const alreadyInfected = new Set(cats.filter(cat =>
             cat.conditions?.some(condition => condition.id === "greencough")
         ));
         for (const cat of cats) {
             cat.conditions = (cat.conditions ?? []).filter(condition =>
-                cat.alive === false || progress(cat, condition, day, log, rememberLimp)
+                cat.alive === false || progress(cat, condition, day, log, rememberLimp, recordDeath)
             );
             const exposures = Object.values(cat.greencoughExposure ?? {});
             delete cat.greencoughExposure;

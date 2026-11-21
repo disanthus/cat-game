@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>WinterClan — A Cat Clan Life Simulator</title>
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=primary-actions">
 </head>
 <body>
   <div class="app-shell">
@@ -31,6 +31,7 @@
       <button class="tab" data-view="breeding">Family &amp; genetics</button>
       <button class="tab" data-view="territory">Territory</button>
       <button class="tab" data-view="chronicle">Chronicle</button>
+      <button class="tab" data-view="starclan">StarClan</button>
     </nav>
 
     <main>
@@ -43,6 +44,7 @@
             <div class="hero-actions">
               <button class="button primary" data-jump="clan">Meet the clan</button>
               <button class="button" data-jump="territory">Plan a patrol</button>
+              <button class="button primary" id="vigilBtn" type="button" hidden>Attend the vigil</button>
             </div>
           </div>
           <div class="camp-art" aria-hidden="true">
@@ -122,6 +124,7 @@
                 <option>Medicine Cat</option>
                 <option>Warrior</option>
                 <option>Apprentice</option>
+                <option>Medicine Cat Apprentice</option>
                 <option>Kit</option>
                 <option>Elder</option>
               </select>
@@ -190,9 +193,9 @@
           </div>
           <p id="individualModeText">Choose an activity for your playable cat. The rest of the clan continues acting autonomously.</p>
           <div class="action-row">
-            <button class="button" id="trainBtn">Practice a skill</button>
-            <button class="button" id="socialBtn">Spend time with a clanmate</button>
-            <button class="button" id="restBtn">Rest and recover</button>
+            <button class="button primary" id="trainBtn">Practice a skill</button>
+            <button class="button primary" id="socialBtn">Spend time with a clanmate</button>
+            <button class="button primary" id="restBtn">Rest and recover</button>
           </div>
         </section>
       </section>
@@ -210,6 +213,18 @@
             <button id="clearLogBtn" class="button small">Clear view</button>
           </div>
           <div id="chronicleList" class="chronicle-list"></div>
+        </section>
+      </section>
+      <section class="view" id="view-starclan">
+        <div class="section-intro">
+          <h2>StarClan</h2>
+          <p>The clan remembers its most recent losses. These cats may visit medicine cats in dreams.</p>
+        </div>
+        <section class="panel">
+          <div class="panel-heading">
+            <h3 id="starClanCount"></h3>
+          </div>
+          <div id="starClanRoster" class="chronicle-list"></div>
         </section>
       </section>
     </main>
@@ -339,13 +354,13 @@
       </div>
     </footer>
   </div>
-  <script src="js/conditions.js"></script>
+  <script src="js/conditions.js?v=condition-onset"></script>
   <script src="js/story-events.js"></script>
   <script src="js/gossip.js"></script>
   <script src="js/npc-ai.js"></script>
   <script src="js/relationships.js"></script>
   <script src="js/social-reactions.js"></script>
   <script src="js/cat-renderer.js"></script>
-  <script src="js/game.js"></script>
+  <script src="js/game.js?v=flood-report"></script>
 </body>
 </html>
