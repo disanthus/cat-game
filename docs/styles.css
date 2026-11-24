@@ -846,6 +846,89 @@ input {
   margin: 12px 0 0;
 }
 
+.patrol-briefing {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 14px;
+  margin: 20px 0;
+}
+
+.briefing-card {
+  --briefing-accent: var(--mauve);
+  --briefing-wash: #f2eaf4;
+  min-width: 0;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-inline-start: 4px solid var(--briefing-accent);
+  border-radius: 12px;
+  background: var(--briefing-wash);
+}
+
+.briefing-card[data-tone="alert"] {
+  --briefing-accent: #a55c39;
+  --briefing-wash: #f9e9db;
+}
+
+.briefing-supplies {
+  --briefing-wash: #f4edf3;
+}
+
+.briefing-card .briefing-label {
+  margin: 0 0 8px;
+  color: var(--deep-indigo);
+  font: 500 0.72rem/1.35 "DM Mono", monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.briefing-weather-text,
+.briefing-stock,
+.briefing-detail,
+.briefing-urgent {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.briefing-weather-text {
+  max-width: 42ch;
+  font-size: clamp(1rem, 2vw, 1.18rem);
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.briefing-stock strong {
+  font-size: 1.5rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.briefing-detail,
+.briefing-urgent {
+  margin-top: 5px;
+  font-size: 0.9rem;
+}
+
+.briefing-detail {
+  color: var(--muted);
+}
+
+.briefing-urgent {
+  color: #763e27;
+  font-weight: 800;
+}
+
+.briefing-supplies .button {
+  margin-top: 12px;
+  max-width: 100%;
+}
+
+@media (max-width: 640px) {
+  .patrol-briefing {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+}
+
 .territory-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

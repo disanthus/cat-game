@@ -4,19 +4,20 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>WinterClan — A Cat Clan Life Simulator</title>
-  <link rel="stylesheet" href="styles.css?v=primary-actions">
+  <link rel="stylesheet" href="styles.css?v=patrol-briefing">
 </head>
 <body>
   <div class="app-shell">
     <header class="topbar">
       <div>
         <p class="eyebrow">A SMALL, LIVING WORLD</p>
-        <h1>WinterClan <span class="paw">✦</span></h1>
-        <p class="subtitle">Live one life. Let the whole clan live around you.</p>
+        <h1>WinterClan <span class="paw">🌾</span></h1>
+        <p class="subtitle">warrior clan simulator</p>
       </div>
       <div class="top-status">
         <span id="seasonLabel" class="pill">Newleaf · Day 1</span>
         <span id="foodLabel" class="pill">Prey: 12</span>
+        <button id="foodForecast" class="text-button" type="button">See meal forecast</button>
         <button id="advanceDayBtn" class="button primary">Advance day ↗</button>
       </div>
     </header>
@@ -176,10 +177,24 @@
         <div class="section-intro">
           <p class="eyebrow">BEYOND THE CAMP</p>
           <h2>Territory &amp; patrols</h2>
-          <p>Choose where your cat will lead a patrol. The clanmates who join are selected by their bonds with you, and the outcome can change skills, memories, and relationships.</p>
+          <p>Choose a route and see which clanmates can cover its goal and hazards.</p>
         </div>
 
         <section id="questCard" hidden aria-labelledby="storyEventSpeaker"></section>
+        <div class="patrol-briefing">
+          <section class="briefing-card briefing-weather" id="weatherBriefing" aria-labelledby="weatherHeading">
+            <h3 id="weatherHeading" class="briefing-label">Weather</h3>
+            <p id="weatherSummary" class="briefing-weather-text"></p>
+          </section>
+          <section class="briefing-card briefing-supplies" id="clanReadiness" aria-labelledby="readinessHeading">
+            <h3 id="readinessHeading" class="briefing-label">Clan readiness</h3>
+            <p class="briefing-stock"><strong id="readinessStock"></strong> <span>prey portions available</span></p>
+            <p id="readinessMeals" class="briefing-detail"></p>
+            <p id="readinessTreatment" class="briefing-detail" hidden></p>
+            <p id="readinessUrgent" class="briefing-urgent" hidden></p>
+            <button id="campRestBtn" class="button primary" type="button">Keep patrols in camp tomorrow</button>
+          </section>
+        </div>
         <div class="territory-grid" id="territoryGrid"></div>
         <section class="panel patrol-panel" id="medicineDen" hidden></section>
 
@@ -354,13 +369,17 @@
       </div>
     </footer>
   </div>
-  <script src="js/conditions.js?v=condition-onset"></script>
-  <script src="js/story-events.js"></script>
+  <script src="js/conditions.js?v=named-herbs"></script>
+  <script src="js/herbs.js?v=deathberry-event"></script>
+  <script src="js/weather.js?v=heat-exhaustion"></script>
+  <script src="js/patrols.js"></script>
+  <script src="js/quirks.js?v=shared-gift-quirk"></script>
+  <script src="js/story-events.js?v=mutual-romance"></script>
   <script src="js/gossip.js"></script>
-  <script src="js/npc-ai.js"></script>
-  <script src="js/relationships.js"></script>
-  <script src="js/social-reactions.js"></script>
+  <script src="js/npc-ai.js?v=mutual-romance"></script>
+  <script src="js/relationships.js?v=rescue-truce"></script>
+  <script src="js/social-reactions.js?v=cat-conflicts"></script>
   <script src="js/cat-renderer.js"></script>
-  <script src="js/game.js?v=flood-report"></script>
+  <script src="js/game.js?v=mutual-romance"></script>
 </body>
 </html>

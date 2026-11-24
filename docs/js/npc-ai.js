@@ -18,6 +18,7 @@ window.NPC = (() => {
         }
 
         if (cat.quarantined) return "rest";
+        if (game.getState().campRestDay === game.getState().day) return "rest";
 
         if (cat.age < 6) {
             if (cat.energy < 35) return "rest";
@@ -116,7 +117,7 @@ window.NPC = (() => {
             if (cat.personality === "playful") successChance -= 0.04;
 
             if (Math.random() < game.clamp(successChance, 0.15, 0.90)) {
-                const preyCaught = game.rand(1, 2);
+                const preyCaught = window.ClanQuirks.patrolPrey([cat], game.rand(1, 2));
                 state.prey += preyCaught;
 
                 if (game.chance(0.25)) {
@@ -151,14 +152,15 @@ window.NPC = (() => {
                 return;
             }
 
-            // Prefer friends when choosing a social partner.
-            const friends = others.filter(other =>
+            const trustedCompany = others.filter(other => !window.Relationships.enmityWith(cat, other));
+            const company = trustedCompany.length && game.chance(.80) ? trustedCompany : others;
+            const friends = company.filter(other =>
                 game.relationship(cat, other) >= 60
             );
 
             const other = friends.length > 0 && game.chance(0.70)
                 ? game.pick(friends)
-                : game.pick(others);
+                : game.pick(company);
 
             const bond = game.relationship(cat, other);
             let change = game.rand(1, 4);
@@ -172,13 +174,8 @@ window.NPC = (() => {
 
             let clashChance = 0.10;
 
-            // Rivals are much more likely to clash.
-            if (
-                cat.relationships.rivals.includes(other.id) ||
-                other.relationships.rivals.includes(cat.id)
-            ) {
-                clashChance += 0.30;
-            }
+            const distrust = window.Relationships.enmityWith(cat, other)?.distrust ?? 0;
+            clashChance += distrust * .08;
 
             if (cat.personality !== other.personality) {
                 clashChance += 0.15;
@@ -203,15 +200,7 @@ window.NPC = (() => {
             clashChance = game.clamp(clashChance, 0.05, 0.70);
 
             if (game.chance(clashChance)) {
-                const areRivals =
-                    cat.relationships.rivals.includes(other.id) ||
-                    other.relationships.rivals.includes(cat.id);
-
-                if (areRivals) {
-                    change = -game.rand(5, 10);
-                } else {
-                    change = -game.rand(2, 6);
-                }
+                change = -game.rand(2, 6);
             }
 
             const bondChange = change > 0 ? game.routineBondGain(bond, change) : change;
@@ -246,6 +235,7 @@ window.NPC = (() => {
             // }
 
             if (change > 0) {
+                game.refreshMutualCrush(cat, other);
                 result = [game.tryDevelopCrush(cat, other), game.tryDevelopCrush(other, cat)]
                     .filter(Boolean)
                     .join(" ");

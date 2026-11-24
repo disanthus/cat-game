@@ -23,14 +23,6 @@ window.SocialReactions = (() => {
         return (a.relationships.areBestFriends?.includes(b.id) && b.relationships.areBestFriends?.includes(a.id));
     }
 
-    function areRivals(a, b) {
-        if (!a || !b) {
-            return false;
-        }
-
-        return (a.relationships.areRivals?.includes(b.id) && b.relationships.areRivals?.includes(a.id));
-    }
-
     // Calculate jealousy-admiration
     function calculateReaction(cat, gossip) {
         if (!cat || !gossip || gossip.type !== "crush"){
@@ -48,7 +40,8 @@ window.SocialReactions = (() => {
 
         const sharesCrush = (cat.relationships?.crushes || []).includes(target.id);
         const besties = areBestFriends(cat, subject);
-        const rivals = areRivals(cat, subject);
+        const rivals = window.Relationships.rivalriesWith(cat, subject)
+            .some(rivalry => rivalry.kind === "shared_crush" && rivalry.goalId === target.id);
 
         // Having feelings for the same cat makes jealousy more likely
         if (sharesCrush) {

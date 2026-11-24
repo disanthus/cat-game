@@ -56,8 +56,8 @@
             showNotice,
             routineBondGain: window.Relationships.routineBondGain,
             tryDevelopCrush,
+            refreshMutualCrush,
             updateBestFriendship,
-            updateRivalry,
             seasonName,
             advanceMoon,
             tryGenerateGossip,
@@ -74,8 +74,7 @@
         }
 
         window.Relationships.initialize({
-            clamp,
-            recordCatEvent
+            clamp
         });
 
         return true;
@@ -92,14 +91,25 @@
             getState: () => state,
             canStartCrush,
             canBecomeMates,
+            areCloseRelatives,
             relationship,
             mateConcern,
+            getCat,
+            chance,
+            clamp,
+            rand,
+            logEvent,
+            rememberEvent,
+            recordCatEvent,
+            tryDevelopCrush,
+            resolveRescueDeaths,
+            runPatrol,
             renderPortrait: renderCatPortrait,
             eventSlot: $("questCard"),
             setEventActive(active) {
                 if (active) switchView("territory");
 
-                document.querySelectorAll(".top-status, .tabs, #territoryGrid, .patrol-panel, .footer-actions")
+                document.querySelectorAll(".top-status, .tabs, #territoryGrid, #campRestBtn, .patrol-panel, .footer-actions")
                     .forEach(section => { section.inert = active; });
             }
         });
@@ -150,8 +160,7 @@
             livingCats,
             pick,
             chance,
-            shareCrushOnSameCat,
-            createCrushRivalry
+            shareCrushOnSameCat
         });
 
         return true;
@@ -315,6 +324,26 @@
         const injuryMessages = [];
         for (const effect of choice.effects || []) {
 
+            if (effect.type === "weather_choice") {
+                return resolveWeatherChoice(effect, participants);
+            }
+            if (effect.type === "wildfire_warning") {
+                return resolveWildfireWarning(effect, participants.actor);
+            }
+
+            if (effect.type === "clan_fight") {
+                return resolveClanFight(participants.instigator, participants.other);
+            }
+            if (effect.type === "broken_ground_rescue") {
+                return StoryEvents.resolveBrokenGround(effect, participants);
+            }
+            if (effect.type === "broken_ground_thanks") {
+                return StoryEvents.resolveRescueThanks(effect, participants);
+            }
+            if (effect.type === "hidden_quirk") {
+                return ClanQuirks.resolve(effect, participants);
+            }
+
             if (effect.type === "footprints_encounter") {
                 const delay = effect.warned ? rand(0, 3) : 0;
                 if (delay > 0) {
@@ -380,6 +409,16 @@
             }
 
             // Memory recording
+            if (effect.type === "argument_grievance") {
+                Relationships.recordGrievance(participants[effect.from], participants[effect.to],
+                    "public_insult", effect.incidentId, state.day);
+            }
+            if (effect.type === "argument_truce") {
+                const { peacemaker, clanmate } = participants;
+                Relationships.resolveGrievance(peacemaker, clanmate, effect.incidentId);
+                Relationships.resolveGrievance(clanmate, peacemaker, effect.incidentId);
+            }
+
             if (effect.type === "memory") {
                 recordCatEvent(
                     effect.value || choice.id,
@@ -444,9 +483,7 @@
             if (effect.type === "refresh_crush") {
                 const admirer = participants[effect.from];
                 const target = participants[effect.to];
-                if (admirer && target && admirer.relationships.crushes.includes(target.id)) {
-                    admirer.relationships.crushStartDays[target.id] = state.day;
-                }
+                if (admirer && target) refreshCrush(admirer, target);
             }
 
             if (effect.type === "secret_relationship") {
@@ -524,6 +561,41 @@
     }
 
 
+    function resolveClanFight(instigator, other) {
+        if (!instigator?.alive || !other?.alive || instigator === other) return;
+        const fighters = [instigator, other];
+        const leader = livingCats().find(cat => cat.rank === "Leader" && !cat.quarantined && !fighters.includes(cat));
+        const leaderStepsIn = chance(.5) && leader;
+        const someoneIsInjured = chance(.30);
+        const fatal = chance(.01);
+        const deceased = fatal ? pick(fighters) : null;
+        const lines = [];
+
+        CatConditions.recordContact(fighters, "close", state.day);
+        if (leaderStepsIn) {
+            for (const cat of fighters) cat.respect = clamp((cat.respect ?? 50) - 8, 0, 100);
+            lines.push(`${leader.name} pulled ${instigator.name} and ${other.name} apart and reprimanded them both. Both lost respect in the clan.`);
+        } else {
+            lines.push(`${instigator.name} and ${other.name} broke apart on their own.`);
+        }
+        if (someoneIsInjured) {
+            const injured = pick(fighters.filter(cat => cat !== deceased));
+            injured.health = Math.max(1, injured.health - 8);
+            CatConditions.add(injured, "scrape", state.day, logEvent);
+            lines.push(`${injured.name} came away with a scrape.`);
+        }
+        if (deceased) lines.push(`${deceased.name} died from an accidental injury during the fight.`);
+        const outcome = lines.join(" ");
+        recordCatEvent("clan_fight", fighters, { description: outcome, importance: deceased ? 5 : 3 });
+        if (deceased) {
+            recordDeath(deceased, lines.at(-1));
+            resolveLeadershipVacancy();
+            if (state.playerCatId === deceased.id) state.playerCatId = livingCats()[0]?.id ?? null;
+            if (selectedCatId === deceased.id) selectedCatId = state.playerCatId;
+        }
+        return outcome;
+    }
+
     const SEASONS = ["Newleaf", "Greenleaf", "Leaf-fall", "Leaf-bare"];
     const RANKS = ["Leader", "Deputy", "Medicine Cat", "Warrior", "Apprentice", "Kit", "Elder"];
     const MEDICINE_APPRENTICE_RANK = "Medicine Cat Apprentice";
@@ -534,12 +606,12 @@
     }
 
     const LOCATIONS = [
-        { id: "pinewood", name: "Pinewood Trail", emoji: "↟𖠰˚☀︎↟𖠰", desc: "A familiar path with plenty of cover and small prey.", difficulty: "Easy", risk: 1, prey: [2, 5], skill: "stealth" },
-        { id: "river", name: "Glassriver Bend", emoji: "°‧ 𓆝 𓆟 𓆞 ·｡", desc: "A quick river runs between smooth stones. Fish are plentiful, but the current is tricky.", difficulty: "Moderate", risk: 2, prey: [3, 6], skill: "swimming" },
-        { id: "ridge", name: "Windcut Ridge", emoji: "ᨒ↟𖠰", desc: "An exposed ridge where sharp eyes and steady paws matter.", difficulty: "Hard", risk: 3, prey: [1, 4], skill: "stamina" },
-        { id: "ruins", name: "Old Twoleg Ruins", emoji: "🏘", desc: "Strange scents, hidden spaces, and the occasional useful discovery.", difficulty: "Moderate", risk: 2, prey: [0, 2], skill: "curiosity" },
-        { id: "moonpool", name: "Moonpool Hollow", emoji: "꒷꒦︶꒷꒦︶ ๋ ࣭ ⭑꒷꒦", desc: "A quiet hollow where the clan leaves offerings and listens to old stories.", difficulty: "Story", risk: 1, prey: [0, 0], skill: "intuition" },
-        { id: "bramble", name: "Bramble Maze", emoji: "⸙. ݁₊ ⸙͎. ݁˖ 𓃦. ݁𓍊. ݁ ݁𓃴", desc: "Dense thorn tunnels make this a good test of patience and agility.", difficulty: "Hard", risk: 3, prey: [1, 4], skill: "agility" }
+        { id: "pinewood", name: "Pinewood Trail", emoji: "↟𖠰˚☀︎↟𖠰", desc: "A familiar path with plenty of cover and small prey.", difficulty: "Easy", risk: 1, prey: [2, 5] },
+        { id: "river", name: "Glassriver Bend", emoji: "°‧ 𓆝 𓆟 𓆞 ·｡", desc: "A quick river runs between smooth stones. Fish are plentiful, but the current is tricky.", difficulty: "Moderate", risk: 2, prey: [3, 6] },
+        { id: "ridge", name: "Windcut Ridge", emoji: "ᨒ↟𖠰", desc: "An exposed ridge where sharp eyes and steady paws matter.", difficulty: "Hard", risk: 3, prey: [1, 4] },
+        { id: "ruins", name: "Old Twoleg Ruins", emoji: "🏘", desc: "Strange scents, hidden spaces, and the occasional useful discovery.", difficulty: "Moderate", risk: 2, prey: [0, 2] },
+        { id: "moonpool", name: "Moonpool Hollow", emoji: "꒷꒦︶꒷꒦︶ ๋ ࣭ ⭑꒷꒦", desc: "A quiet hollow where the clan leaves offerings and listens to old stories.", difficulty: "Story", risk: 1, prey: [0, 0] },
+        { id: "bramble", name: "Bramble Maze", emoji: "⸙. ݁₊ ⸙͎. ݁˖ 𓃦. ݁𓍊. ݁ ݁𓃴", desc: "Dense thorn tunnels make this a good test of patience and agility.", difficulty: "Hard", risk: 3, prey: [1, 4] }
     ];
 
     const PERSONALITIES = [
@@ -865,7 +937,6 @@
             lastBreedingAttemptDay: overrides.lastBreedingAttemptDay ?? null,
             relationships: {
                 crushes: [],
-                rivals: [],
                 bestFriends: [],
                 mates: [],
                 jealousyAdmiration: {},
@@ -953,14 +1024,15 @@
             moon: 1,
             dayOfMoon: 1,
             seasonIndex: 0,
+            weather: null,
             predatorRisk: null,
             pendingFootprints: [],
             pendingVigils: [],
-            herbs: 3,
+            herbInventory: ClanHerbs.normalize(3),
             medicineDream: null,
             disaster: null,
             nextDreamDay: 3,
-            prey: 9000,
+            prey: 12,
             clanName: "WinterClan",
             cats: [],
             starClan: [],
@@ -1365,6 +1437,7 @@
     function render() {
         $("seasonLabel").textContent = currentDate();
         $("foodLabel").textContent = `Prey: ${state.prey}`;
+        $("foodForecast").textContent = mealForecastText();
 
         renderStats();
         renderCamp();
@@ -1429,7 +1502,7 @@
             : `${seasonName()} brings another day.`;
 
         $("campSummary").textContent =
-            `${state.clanName} has ${cats.length} living cats. The camp is quiet for now, but every cat carries a story.`;
+            `${state.clanName} currently has ${cats.length} living cats.`;
 
         $("campEvents").innerHTML = state.log.slice(0, 5).map(eventHtml).join("") ||
             `<p class="empty-state">A quiet day in camp.</p>`;
@@ -1646,18 +1719,14 @@
     function profileOverviewHtml(c, skills, isPlayer) {
         const p = phenotype(c.genes);
         const viewpoint = getCat(state.playerCatId);
-        const revealed = c.hiddenQuirk === "secret_gift_giver" &&
-            (c === viewpoint || c.giftStoryExposed || viewpoint?.memories?.some(memory =>
-                ["uncovered_gift_giver", "betrayed_by_friend"].includes(memory.event) &&
-                memory.participants?.includes(c.id)
-            ));
+        const quirk = ClanQuirks.profile(c, viewpoint);
         return `
     <p>${escapeHtml(catBio(c))}</p>
 
-    ${revealed ? `<section class="profile-section">
+    ${quirk ? `<section class="profile-section">
       <h4>Discovered quirk</h4>
-      <p><strong>Secret gift-giver</strong> · Leaves small gifts in a favorite cat’s nest.</p>
-      <p><strong>Hidden motive</strong> · Wants a close friend all to themself.</p>
+      <p><strong>${escapeHtml(quirk.title)}</strong>${quirk.description ? ` · ${escapeHtml(quirk.description)}` : ""}</p>
+      ${quirk.motive ? `<p><strong>Hidden motive</strong> · ${escapeHtml(quirk.motive)}</p>` : ""}
     </section>` : ""}
 
     <div class="action-row">
@@ -1748,10 +1817,10 @@
     }
 
     function knowsAdmirer(cat, admirerId) {
-        const knowsRumor = cat.relationships.knownGossip?.some(rumor =>
+        const knowsRumor = cat?.relationships.knownGossip?.some(rumor =>
             rumor.type === "crush" && rumor.subjectId === admirerId && rumor.targetId === cat.id
         );
-        return knowsRumor || cat.memories?.some(memory =>
+        return knowsRumor || cat?.memories?.some(memory =>
             ["admirer_conversation", "mutual_confession", "rejected_confession"].includes(memory.event) &&
             memory.participants?.includes(admirerId)
         );
@@ -1762,14 +1831,14 @@
             (to.id !== state.playerCatId || knowsAdmirer(to, from.id));
     }
 
-    function describeRelationship(cat, other, bond, feeling, { mate, bestFriend, rival, crush, knownAdmirer }) {
-        const past = !other.alive;
+    function describeRelationship(cat, other, bond, feeling, { mate, bestFriend, rivalries, grievance, crush, knownAdmirer }) {
+        const past = !cat.alive || !other.alive;
         const bondDescriptions = {
             "close bond": past ? "felt close to" : "feels close to",
             friendly: past ? "got along with" : "gets along with",
             neutral: past ? "had a neutral bond with" : "has a neutral bond with",
             strained: past ? "had a strained relationship with" : "has a strained relationship with",
-            rivals: past ? "had a very strained relationship with" : "has a very strained relationship with"
+            "very strained": past ? "had a very strained relationship with" : "has a very strained relationship with"
         };
         const name = other.name;
         let description = `${cat.name} ${bondDescriptions[relationshipLabel(bond)]} ${name}.`;
@@ -1784,8 +1853,22 @@
             description = `${cat.name} ${past ? "had" : "has"} a crush on ${name}.`;
         } else if (bestFriend) {
             description = `${cat.name} ${past ? "considered" : "considers"} ${name} a best friend.`;
-        } else if (rival) {
-            description = `${cat.name} ${past ? "saw" : "sees"} ${name} as a rival.`;
+        }
+
+        if (rivalries.some(rivalry => rivalry.kind === "mentor_praise")) {
+            description += ` ${cat.name} ${past ? "competed" : "competes"} with ${name} for their mentor's praise.`;
+        }
+        if (rivalries.some(rivalry => rivalry.kind === "shared_crush")) {
+            description += ` ${cat.name} ${past ? "saw" : "sees"} ${name} as a romantic rival over a shared crush.`;
+        }
+        if (grievance) {
+            const reasons = {
+                hurtful_rumor: "because they believed the cat had mocked them",
+                false_rumor: "for spreading a false rumor",
+                unfair_accusation: "for accusing them of spoiling a hunt",
+                public_insult: "for insulting them in front of their clanmates"
+            };
+            description += ` ${cat.name} ${past ? "distrusted" : "distrusts"} ${name} ${reasons[grievance.cause]}.`;
         }
 
         if (knownAdmirer) {
@@ -1803,29 +1886,26 @@
         if (feelingDescriptions[feeling]) {
             description += ` ${cat.name} also ${feelingDescriptions[feeling]}.`;
         }
-        if (cat.memories?.some(memory =>
-            memory.event === "betrayed_by_friend" &&
-            (memory.rumorStarterId ?? memory.participants?.[0]) === other.id &&
-            (!memory.privateOwnerId || memory.privateOwnerId === state.playerCatId)
-        )) {
-            description += ` ${cat.name} ${past ? "was" : "is"} wary of ${name} after learning who started the rumor.`;
-        }
         return description;
     }
 
     function profileRelationshipsHtml(cat) {
-        const filters = ["All", "Family", "Friends", "Romance", "Rivals"];
+        const filters = ["All", "Family", "Friends", "Romance", "Rivals", "Enemies"];
         const cards = [];
 
         for (const other of clanHistoryCats()) {
             if (other.id === cat.id) continue;
-            const { mates, bestFriends, rivals, crushRivals } = cat.relationships;
+            const { mates, bestFriends } = cat.relationships;
             const bond = relationship(cat, other);
             const feeling = jealousyAdmirationLabel(jealousyAdmiration(cat, other));
             const formerMate = !other.alive && other.relationships.mates?.includes(cat.id);
             const mate = mates?.includes(other.id) || formerMate;
             const bestFriend = bestFriends?.includes(other.id);
-            const rival = rivals?.includes(other.id);
+            const rivalries = Relationships.rivalriesWith(cat, other).filter(rivalry =>
+                rivalry.kind !== "shared_crush" || rivalry.goalId !== state.playerCatId ||
+                (knowsAdmirer(getCat(state.playerCatId), cat.id) && knowsAdmirer(getCat(state.playerCatId), other.id)));
+            const grievance = Relationships.enmityWith(cat, other)?.grievances.findLast(entry =>
+                !entry.privateOwnerId || entry.privateOwnerId === state.playerCatId);
             const crush = visibleCrush(cat, other);
             const knownAdmirer = visibleCrush(other, cat) && knowsAdmirer(cat, other.id);
             const ties = [];
@@ -1843,8 +1923,9 @@
                 addTie("family", littermate ? "Littermate" : "Sibling");
             }
             if (bestFriend) addTie("friends", "Best Friend");
-            if (rival) addTie("rivals", "Rival");
-            if (crushRivals?.includes(other.id)) addTie("rivals", "Romantic Rival");
+            if (rivalries.some(rivalry => rivalry.kind === "mentor_praise")) addTie("rivals", "Rival");
+            if (rivalries.some(rivalry => rivalry.kind === "shared_crush")) addTie("rivals", "Romantic Rival");
+            if (grievance) addTie("enemies", "Enemy");
             if (cat.mentorId === other.id) ties.push("Mentor");
             if (other.mentorId === cat.id) ties.push("Apprentice");
             const priority = ties.length ? 1 : 0;
@@ -1852,13 +1933,12 @@
             if (crush) addTie("romance", "Crush");
             if (knownAdmirer) addTie("romance", "Known admirer");
             if (bond >= 25) categories.add("friends");
-            if (bond <= -20) categories.add("rivals");
 
             if (!other.alive && !categories.has("family") && !ties.length) continue;
             if (!ties.length && bond === 0 && feeling === "neutral") continue;
             if (profileView.filter !== "all" && !categories.has(profileView.filter)) continue;
             const description = describeRelationship(cat, other, bond, feeling, {
-                mate, bestFriend, rival, crush, knownAdmirer
+                mate, bestFriend, rivalries, grievance, crush, knownAdmirer
             });
             cards.push({ other, bond, description, ties, priority });
         }
@@ -1971,10 +2051,6 @@
         return window.Relationships.areBestFriends(a, b);
     }
 
-    function areRivals(a, b) {
-        return window.Relationships.areRivals(a, b);
-    }
-
     function shareCrushOnSameCat(a, b) {
         if (!a || !b || a.id === b.id) {
             return false;
@@ -2017,7 +2093,8 @@
             older.age >= 12 && older.age - younger.age <= 3;
     }
 
-    const CRUSH_DURATION = 20;
+    const CRUSH_DURATION = 30;
+    const MUTUAL_CRUSH_DURATION = 60;
     const MULTIPLE_CRUSH_PERSONALITIES = ["bold", "curious", "playful"];
 
     function romanceCooldownMoons(cat, reason) {
@@ -2057,17 +2134,31 @@
 
     function updateCrushEligibility() {
         const cats = livingCats();
-        for (const cat of cats) {
+        const updates = cats.map(cat => {
             const rels = cat.relationships;
             const startDays = rels.crushStartDays || {};
+            const activityDays = rels.crushActivityDays || {};
             const validCrushes = [...new Set(rels.crushes)]
                 .map(getCat)
                 .filter(target => canKeepCrush(cat, target) && !rels.mates.includes(target.id))
-                .filter(target => state.day - (startDays[target.id] ?? state.day) < CRUSH_DURATION)
+                .filter(target => {
+                    const reciprocalActive = target.relationships.crushActivityDays?.[cat.id] ??
+                        target.relationships.crushStartDays?.[cat.id] ?? state.day;
+                    const mutual = target.relationships.crushes.includes(cat.id) &&
+                        !target.relationships.mates.includes(cat.id) && canKeepCrush(target, cat) &&
+                        state.day - reciprocalActive < MUTUAL_CRUSH_DURATION;
+                    const lastActive = activityDays[target.id] ?? startDays[target.id] ?? state.day;
+                    return state.day - lastActive < (mutual ? MUTUAL_CRUSH_DURATION : CRUSH_DURATION);
+                })
                 .sort((a, b) => relationship(cat, b) - relationship(cat, a))
-                .slice(0, crushLimit(cat));
-            rels.crushes = validCrushes.map(target => target.id);
-            rels.crushStartDays = Object.fromEntries(rels.crushes.map(id => [id, startDays[id] ?? state.day]));
+                .slice(0, crushLimit(cat)).map(target => target.id);
+            return { cat, validCrushes, startDays, activityDays };
+        });
+        for (const { cat, validCrushes, startDays, activityDays } of updates) {
+            const rels = cat.relationships;
+            rels.crushes = validCrushes;
+            rels.crushStartDays = Object.fromEntries(validCrushes.map(id => [id, startDays[id] ?? state.day]));
+            rels.crushActivityDays = Object.fromEntries(validCrushes.map(id => [id, activityDays[id] ?? rels.crushStartDays[id]]));
 
             for (const id of Object.keys(rels.secretPartners || {})) {
                 const target = getCat(id);
@@ -2080,24 +2171,7 @@
                 if (mate && target && areCloseRelatives(mate, target)) concern.pending = null;
             }
         }
-        updateCrushRivalries(cats);
-    }
-
-    function updateCrushRivalries(cats) {
-        for (const cat of cats) {
-            const rels = cat.relationships;
-            const activeTargets = {};
-            for (const id of rels.crushRivals || []) {
-                const rival = getCat(id);
-                if (!rival) continue;
-                const targets = (rels.crushRivalTargets?.[id] ?? rels.crushes)
-                    .filter(targetId => rels.crushes.includes(targetId) &&
-                        rival.relationships.crushes.includes(targetId));
-                if (targets.length) activeTargets[id] = targets;
-            }
-            rels.crushRivalTargets = activeTargets;
-            rels.crushRivals = Object.keys(activeTargets);
-        }
+        Relationships.refreshRivalries(cats, clanHistoryCats());
     }
 
     function clearCrush(cat, target) {
@@ -2105,8 +2179,9 @@
         if (!rels.crushes.includes(target.id)) return;
         rels.crushes = rels.crushes.filter(id => id !== target.id);
         if (rels.crushStartDays) delete rels.crushStartDays[target.id];
+        if (rels.crushActivityDays) delete rels.crushActivityDays[target.id];
 
-        updateCrushRivalries(livingCats());
+        Relationships.refreshRivalries(livingCats(), clanHistoryCats());
     }
 
     function clearOutsideTie(cat, targetId) {
@@ -2148,17 +2223,30 @@
         );
     }
 
+    function refreshCrush(cat, target) {
+        if (cat.relationships.crushes.includes(target.id)) {
+            (cat.relationships.crushActivityDays ??= {})[target.id] = state.day;
+        }
+    }
+
+    function refreshMutualCrush(a, b) {
+        if (!a.relationships.crushes.includes(b.id) || !b.relationships.crushes.includes(a.id)) return;
+        refreshCrush(a, b);
+        refreshCrush(b, a);
+    }
+
     function addCrush(a, b) {
         if (!canStartCrush(a, b)) return false;
         a.relationships.crushes.push(b.id);
         a.relationships.crushStartDays ??= {};
         a.relationships.crushStartDays[b.id] = state.day;
+        refreshCrush(a, b);
         return true;
     }
 
-    function tryDevelopCrush(cat, other) {
+    function tryDevelopCrush(cat, other, chanceMultiplier = 1) {
         const attraction = other.sex === "male" ? cat.attractionToMales : cat.attractionToFemales;
-        const crushChance = 0.02 + (attraction / 100) * 0.03;
+        const crushChance = (0.02 + (attraction / 100) * 0.03) * chanceMultiplier;
         if (!canStartCrush(cat, other) || attraction <= 0 || relationship(cat, other) < 25 ||
             cat.relationships.mates.length ||
             !chance(crushChance) || !addCrush(cat, other)) {
@@ -2179,13 +2267,6 @@
         return window.Relationships.updateBestFriendship(a, b);
     }
 
-    function updateRivalry(a, b) {
-        return window.Relationships.updateRivalry(a, b);
-    }
-
-    function createCrushRivalry(a, b, sharedCrush) {
-        return window.Relationships.createCrushRivalry(a, b, sharedCrush);
-    }
 
     // find all cats who have an actual crush on another cat
     function getConfessionCandidates() {
@@ -2551,7 +2632,9 @@
     function resolveStoryFootprints(patrol, warned) {
         CatConditions.recordContact(patrol, "patrol", state.day);
         const result = window.StoryEvents.resolveFootprintsEncounter(patrol, warned, activePredatorRisk());
-        return applyEncounterResult(result, patrol);
+        const outcome = applyEncounterResult(result, patrol);
+        if (result.successful) strengthenPatrolRelationships(patrol);
+        return outcome;
     }
 
     function resolvePendingFootprints() {
@@ -2570,20 +2653,74 @@
 
     function renderTerritory() {
         renderMedicineDen();
+        $("weatherSummary").textContent = ClanWeather.status(state);
+        const spell = state.weather?.spell;
+        const forecast = spell?.startsDay > state.day;
+        const weather = forecast ? spell.id : ClanWeather.active(state);
+        $("weatherHeading").textContent = forecast ? "Weather forecast" : "Current weather";
+        $("weatherBriefing").dataset.tone = ["thunderstorm", "rain", "snow"].includes(weather) ? "alert" : "calm";
+
+        const patients = [...new Set(CatConditions.patientsNeedingTreatment(livingCats(), state.day).map(item => item.cat))];
+        const urgent = patients.filter(cat => cat.hunger > 75 &&
+            (cat.rank === "Medicine Cat" || (cat.age >= 6 && CatConditions.skill(cat, "hunting") >= 4)));
+        const meals = expectedMeals();
+        const shortage = Math.max(0, meals - state.prey);
+        $("clanReadiness").dataset.tone = shortage || urgent.length ? "alert" : "calm";
+        $("readinessStock").textContent = state.prey;
+        $("readinessMeals").textContent = `${meals} ${meals === 1 ? "cat needs" : "cats need"} food tonight` +
+            (shortage ? ` · ${shortage} ${shortage === 1 ? "portion" : "portions"} short` : "");
+        $("readinessTreatment").hidden = !patients.length;
+        $("readinessTreatment").textContent = `${patients.length} need treatment · ${ClanHerbs.total(state.herbInventory)} supplies in storage`;
+        $("readinessUrgent").hidden = !urgent.length;
+        $("readinessUrgent").textContent = urgent.length
+            ? `Feed and treat ${new Intl.ListFormat("en").format(urgent.map(cat => cat.name))} first.` : "";
+        const restQueued = state.campRestDay === state.day + 1;
+        $("campRestBtn").textContent = restQueued ? "Resume patrols tomorrow" : "Keep patrols in camp tomorrow";
+        $("campRestBtn").disabled = !restQueued && !canPlanCampRest();
         const hunter = shortHuntCandidate();
+        const candidates = livingCats().filter(canPatrol);
+        const player = playerCat();
         $("territoryGrid").innerHTML = (hunter ? `
-            <button type="button" class="location-card" id="shortHuntBtn">
+            <div class="location-card">
                 <h3>Short hunt near camp</h3>
                 <p>${escapeHtml(hunter.name)} can bring back a small catch for the cats who need it most.</p>
                 <span class="location-difficulty">Once per day</span>
-            </button>` : "") + LOCATIONS.map(loc =>
-            `<button class="location-card" data-patrol="${loc.id}">
+                <div class="tag-row">
+                    <button type="button" class="button primary" data-short-hunt="weakest">Feed the weakest first</button>
+                    <button type="button" class="button primary" data-short-hunt="working">Feed hunters and healers first</button>
+                </div>
+            </div>` : "") + LOCATIONS.map(loc => {
+            const effects = ClanWeather.patrolEffects(state, seasonName(), loc);
+            const { patrol, patrolHealer } = planManualPatrol(loc, candidates, player);
+            const plan = ClanPatrols.plan(loc, patrol, effects, patrolHealer);
+            const roles = plan
+                ? `${escapeHtml(plan.goal.lead.name)} (${plan.goal.name}) · ${escapeHtml(plan.safety.lead.name)} (${plan.guide.toLowerCase()}, ${plan.safety.name})`
+                : "No patrols available";
+            const forecast = plan ? [
+                ...(!patrolHealer ? [`${Math.round(plan.goalChance * 100)}% goal chance`] : []),
+                `${Math.round(plan.injuryChance * 100)}% route injury risk`,
+                ...(hasShelteredHuntFallback(loc, effects, plan.goal) ? ["Fallback catch on a missed hunt"] : []),
+                ...(plan.energySaved ? [`${plan.energySaved} energy saved each`] : [])
+            ].join(" · ") : "";
+            const notes = [
+                patrolHealer ? `Gather here: ${ClanHerbs.at(loc).map(herb => herb.name).join(", ")}` : "",
+                effects.energy ? `+${effects.energy} energy cost` : "",
+                effects.heatExhaustionRisk ? `${Math.round(effects.heatExhaustionRisk * 100)}% heat exhaustion risk per cat` : "",
+                effects.weatherRisk === 2 ? "Dangerous river crossing in the thunderstorm" :
+                    effects.weatherRisk ? "Higher risk in heavy rain" : "",
+                effects.burnedUntil ? `Wildfire damage through Day ${effects.burnedUntil} · Higher patrol risk and fewer herbs` : "",
+                effects.prey ? `${effects.prey > 0 ? "+" : ""}${effects.prey} prey on success` : ""
+            ].filter(Boolean);
+            return `<button class="location-card" data-patrol="${loc.id}">
         <span class="location-emoji">${loc.emoji}</span>
         <h3>${loc.name}</h3>
         <p>${loc.desc}</p>
         <span class="location-difficulty">${loc.difficulty} patrol</span>
-      </button>`
-        ).join("");
+        <p>${roles}</p>
+        ${forecast ? `<p class="muted">${forecast}</p>` : ""}
+        ${notes.length ? `<p class="muted">${notes.join(" · ")}</p>` : ""}
+      </button>`;
+        }).join("");
 
         const c = playerCat();
 
@@ -2641,20 +2778,25 @@
 
     function assignMedicineApprentice(healer, apprentice) {
         apprentice.mentorId = healer.id;
+        Relationships.refreshRivalries(livingCats(), clanHistoryCats());
         apprentice.medicineTrack = true;
         const message = `${healer.name} chose ${apprentice.name} as their medicine cat apprentice.`;
         logEvent("training", message);
         return message;
     }
 
-    function gatherHerbs(healer, location) {
+    function gatherHerbs(healer, location, preferred) {
         if (healer.lastHerbDay === state.day) {
             return `${healer.name} has already gathered herbs today.`;
         }
         healer.lastHerbDay = state.day;
-        const amount = rand(1, 3);
-        state.herbs += amount;
-        const message = `${healer.name} gathered ${amount} ${amount === 1 ? "herb" : "herbs"} at ${location.name}.`;
+        const healing = CatConditions.skill(healer, "healing");
+        const amount = Math.max(1, rand(1, 3) + Math.min(2, Math.floor(healing / 4)) +
+            ClanWeather.herbModifier(state, seasonName(), location));
+        const herb = ClanHerbs.gatherable(location, preferred, rand);
+        if (!herb) return `${healer.name} found no medicine supplies at ${location.name}.`;
+        state.herbInventory[herb.id] = ClanHerbs.count(state.herbInventory, herb) + amount;
+        const message = `${healer.name} gathered ${amount} × ${herb.name} at ${location.name}.`;
         logEvent("herbs", message);
         return message;
     }
@@ -2681,10 +2823,36 @@
         return message;
     }
 
-    function treatPatient(healer, patient) {
-        state.herbs--;
+    function treatPatient(healer, patient, herb) {
+        if (!patient || healer.lastTreatmentDay === state.day) return;
+        if (!herb) return "Choose a supply from the medicine den first.";
+        const stock = ClanHerbs.count(state.herbInventory, herb);
+        const cost = patient.herbCost;
+        if (stock < cost) {
+            return `Treatment needs ${cost} × ${herb.name}. Only ${stock} in storage.`;
+        }
+        state.herbInventory[herb.id] -= cost;
         healer.lastTreatmentDay = state.day;
-        const message = CatConditions.treat(healer, patient, state.day);
+        let outcome;
+        if (herb.lethal) {
+            outcome = `${patient.cat.name} died after being given deathberries.`;
+            recordDeath(patient.cat, outcome);
+            resolveLeadershipVacancy();
+            if (state.playerCatId === patient.cat.id) state.playerCatId = livingCats()[0]?.id ?? null;
+            if (selectedCatId === patient.cat.id) selectedCatId = state.playerCatId;
+        } else if (!herb.treats.includes(patient.condition.id)) {
+            const condition = patient.condition;
+            condition.lastTreatmentAttemptDay = state.day;
+            const delay = Math.min(2, 4 - (condition.treatmentDelay ?? 0));
+            condition.treatmentDelay = (condition.treatmentDelay ?? 0) + delay;
+            if (Number.isFinite(condition.naturalRecoveryDay)) condition.naturalRecoveryDay += delay;
+            outcome = delay
+                ? `${herb.name} did not help ${patient.cat.name}. Recovery was delayed.`
+                : `${herb.name} did not help ${patient.cat.name}.`;
+        } else {
+            outcome = CatConditions.treat(healer, patient, state.day);
+        }
+        const message = `${outcome} Used ${cost} × ${herb.name}.`;
         logEvent("treatment", message);
         return message;
     }
@@ -2721,9 +2889,13 @@
 
         den.innerHTML = `
             <h2>Medicine Cat Den</h2>
-            <p>Herbs in Storage: <strong>${state.herbs}</strong> · Healing: <strong>${healer.skills.healing ?? 0}/10</strong>
+            <p>Healing: <strong>${healer.skills.healing ?? 0}/10</strong>
             ${(healer.skills.healing ?? 0) < 10 ? ` · Diagnostic Experience: ${healer.diagnosisExperience ?? 0}/3` : ""}</p>
             <p>Each medicine cat can gather herbs once per day. <br>Diagnose illnesses and injuries to level up healing skill.</p>
+            <h3>Medicine stores</h3>
+            <ul>
+                ${ClanHerbs.herbs.map(herb => `<li>${herb.name} · <strong>${ClanHerbs.count(state.herbInventory, herb)}</strong>${herb.lethal ? " · Lethal" : ""}</li>`).join("")}
+            </ul>
             ${unavailable ? "<p>Rest until you can care for other cats again.</p>" : ""}
             <h3>Patients</h3>
             ${patients.map(cat => {
@@ -2737,10 +2909,28 @@
                     <p>${escapeHtml(status)}${cat.quarantined ? " · In quarantine" : ""}</p>
                     <div class="profile-controls">
                         ${button("diagnose", "Diagnose", cat, !available)}
-                        ${button("treat", "Treat (1 herb)", cat, !available || !state.herbs ||
-                            healer.lastTreatmentDay === state.day || !treatment.some(patient => patient.cat === cat))}
                         ${button(cat.quarantined ? "release" : "quarantine", cat.quarantined ? "Release" : "Quarantine", cat, !available)}
                     </div>
+                    ${treatment.filter(patient => patient.cat === cat).map(patient => {
+                        const known = patient.condition.diagnosedSeverity === patient.condition.severity &&
+                            patient.condition.diagnosedStageDay === patient.condition.stageDay;
+                        const disabled = !available || healer.lastTreatmentDay === state.day;
+                        const id = escapeHtml(`herb-${cat.id}-${patient.condition.id}`);
+                        const options = ClanHerbs.herbs.filter(herb => ClanHerbs.count(state.herbInventory, herb) > 0);
+                        return `<div class="profile-controls">
+                            <label for="${id}">${known ? patient.name : "Undiagnosed condition"} · ${patient.herbCost} needed</label>
+                            <select id="${id}"${disabled ? " disabled" : ""}>
+                                <option value="">Choose a supply</option>
+                                ${options.map(herb => {
+                                    const stock = ClanHerbs.count(state.herbInventory, herb);
+                                    return `<option value="${herb.id}"${stock < patient.herbCost ? " disabled" : ""}>${herb.name} (${stock})${herb.lethal ? " — lethal" : ""}</option>`;
+                                }).join("")}
+                            </select>
+                            <button type="button" class="button primary" data-medicine-action="treat"
+                                data-patient="${escapeHtml(cat.id)}" data-condition="${patient.condition.id}"
+                                ${disabled || !options.some(herb => ClanHerbs.count(state.herbInventory, herb) >= patient.herbCost) ? "disabled" : ""}>Treat</button>
+                        </div>`;
+                    }).join("")}
                 </div>`;
             }).join("") || "<p>No cats need care today.</p>"}
             <h3>Apprentice</h3>
@@ -2756,7 +2946,7 @@
         `;
     }
 
-    function handleMedicineAction(action, id) {
+    function handleMedicineAction(action, id, conditionId) {
         const healer = playerCat();
         const cat = getCat(id);
         if (healer?.rank !== "Medicine Cat" || !cat ||
@@ -2765,9 +2955,11 @@
         let message;
         if (action === "diagnose" && needsIsolation(cat)) {
             message = diagnosePatient(healer, cat);
-        } else if (action === "treat" && state.herbs && healer.lastTreatmentDay !== state.day) {
-            const patient = CatConditions.patientsNeedingTreatment([cat], state.day)[0];
-            if (patient) message = treatPatient(healer, patient);
+        } else if (action === "treat" && healer.lastTreatmentDay !== state.day) {
+            const patient = CatConditions.patientsNeedingTreatment([cat], state.day)
+                .find(candidate => candidate.condition.id === conditionId);
+            const herb = ClanHerbs.get($(`herb-${id}-${conditionId}`)?.value);
+            if (patient) message = treatPatient(healer, patient, herb);
         } else if (action === "quarantine" && !cat.quarantined && needsIsolation(cat)) {
             message = setQuarantine(cat, true);
         } else if (action === "release" && cat.quarantined) {
@@ -2809,18 +3001,28 @@
                 }
             }
             const patients = healer.quarantined ? [healer] : cats;
-            const patient = CatConditions.patientsNeedingTreatment(patients, state.day)[0];
+            const treatment = CatConditions.patientsNeedingTreatment(patients, state.day);
+            const patient = treatment[0];
             if (patient) {
                 diagnosePatient(healer, patient.cat, false);
                 busy.add(healer.id);
             }
-            if (!healer.quarantined && state.herbs < 3) {
-                const location = LOCATIONS.find(loc => loc.id !== "moonpool");
-                gatherHerbs(healer, location);
+            const stock = state.herbInventory;
+            const needed = patient && !ClanHerbs.affordable(stock, patient)
+                ? ClanHerbs.remedies(patient).sort((a, b) => ClanHerbs.count(stock, b) - ClanHerbs.count(stock, a))[0]
+                : ClanHerbs.medicinal.find(herb => ClanHerbs.count(stock, herb) < 3);
+            if (!healer.quarantined && needed && healer.lastHerbDay !== state.day) {
+                const location = LOCATIONS.find(loc => needed.routes.includes(loc.id));
+                gatherHerbs(healer, location, needed);
                 healer.energy = clamp(healer.energy - 10, 0, 100);
                 busy.add(healer.id);
             }
-            if (patient && state.herbs && healer.lastTreatmentDay !== state.day) treatPatient(healer, patient);
+            const affordable = treatment.find(candidate => ClanHerbs.affordable(stock, candidate));
+            if (affordable && healer.lastTreatmentDay !== state.day) {
+                if (affordable.cat !== patient.cat) diagnosePatient(healer, affordable.cat, false);
+                treatPatient(healer, affordable, ClanHerbs.affordable(stock, affordable));
+                busy.add(healer.id);
+            }
 
             if (canChooseMedicineApprentice(healer)) {
                 const kits = medicineKitCandidates();
@@ -2838,18 +3040,61 @@
         return busy;
     }
 
+    function scheduleWeatherFlood() {
+        const spell = state.weather?.spell;
+        const risk = ClanWeather.floodChance(spell);
+        if (!risk || spell.floodChecked) return;
+        spell.floodChecked = true;
+        const day = Math.max(state.day + 1, spell.startsDay + 1);
+        if (state.disaster || day > spell.endsDay || !chance(risk)) return;
+
+        state.disaster = { day, weatherStart: spell.startsDay, weatherId: spell.id, warnClan: false };
+        logEvent("weather", "The river is rising fast. The low ground around camp may flood.");
+    }
+
+    const WILDFIRE_COOLDOWN = 40;
+
+    function canScheduleWildfire() {
+        return !state.disaster && state.day - (state.lastWildfireDay ?? -WILDFIRE_COOLDOWN) >= WILDFIRE_COOLDOWN;
+    }
+
+    function queueWildfire(day, source) {
+        const territory = pick(LOCATIONS.filter(loc => loc.prey[1] > 0));
+        state.disaster = { kind: "wildfire", day, source, locationId: territory.id, warnClan: false };
+        return state.disaster;
+    }
+
+    function scheduleHeatWildfire() {
+        const spell = state.weather?.spell;
+        if (ClanWeather.active(state) !== "heat" || spell.fireChecked) return;
+        spell.fireChecked = true;
+        if (!canScheduleWildfire() || !chance(.08)) return;
+        queueWildfire(state.day + 1, "heat");
+        logEvent("weather", "Smoke is rising beyond the territory. The fire could reach camp by dawn.");
+    }
+
     function resolveMedicineDream(warnClan) {
         const dream = state.medicineDream;
         if (!dream) return;
         state.medicineDream = null;
-        state.disaster = { ...dream, warnClan };
+        // An omen from a save made before weather-driven floods may already promise a flood.
+        if (!state.disaster && dream.kind == null && dream.weatherStart == null) {
+            state.disaster = { ...dream, warnClan: false };
+        }
+        const disaster = state.disaster;
+        const kind = dream.kind ?? "flood";
+        if (disaster && (disaster.kind ?? "flood") === kind && disaster.day === dream.day &&
+            disaster.weatherStart === dream.weatherStart) {
+            disaster.healerId = dream.healerId;
+            disaster.warnClan ||= warnClan;
+        }
         const healer = getCat(dream.healerId);
         const response = warnClan
-            ? `${healer.name} warned the clan about a coming flood. The clan began preparing.`
-            : `${healer.name} kept the warning private and prepared for the flood alone.`;
+            ? `${healer.name} warned the clan about a coming ${kind}. The clan began preparing.`
+            : `${healer.name} kept the warning private and prepared for the ${kind} alone.`;
         const message = dream.omen ? `${dream.omen} ${response}` : response;
-        rememberEvent(healer, "flood_omen", {
-            description: dream.omen ? message : `${healer.name} dreamed of floodwater rising through the camp. ${response}`,
+        rememberEvent(healer, `${kind}_omen`, {
+            description: message,
             importance: 4,
             participants: dream.visitorId ? [dream.visitorId] : []
         });
@@ -2877,8 +3122,8 @@
         }
 
         StoryEvents.showStoryEvent({
-            title: "A Warning in Water",
-            description: `${dream.omen ?? `${healer.name} dreamed of floodwater rising through the camp.`} Will ${healer.name} warn the clan or prepare alone?`,
+            title: dream.kind === "wildfire" ? "A Warning in Ash" : "A Warning in Water",
+            description: `${dream.omen ?? `${healer.name} woke with a warning for the clan.`} Will ${healer.name} warn the clan or prepare alone?`,
             decisionMaker: "healer",
             choices: [
                 { id: "warn_clan", text: "Warn the clan" },
@@ -2893,27 +3138,47 @@
     }
 
     function rollMedicineDream() {
-        if (state.disaster || state.day < state.nextDreamDay) return false;
+        if (state.day < state.nextDreamDay) return false;
+        const pending = state.disaster;
+        const canForeseeDisaster = pending && (pending.weatherStart != null || pending.kind === "wildfire") &&
+            pending.day > state.day && !pending.omenSeen;
         for (const healer of livingCats().filter(cat => cat.rank === "Medicine Cat")) {
-            if (!chance(clamp(healer.faith ?? 50, 0, 100) * .002)) continue;
+            if (!chance(clamp(healer.faith ?? 50, 0, 100) * (canForeseeDisaster ? .003 : .002))) continue;
             state.nextDreamDay = state.day + 10;
             const visitor = state.starClan.length ? pick(state.starClan) : null;
-            if (!chance(.65)) {
-                const description = visitor
-                    ? `${visitor.name} visited ${healer.name} in a dream. They sat together under the stars until dawn.`
-                    : `${healer.name} dreamed of stars reflected in still water and woke without a clear omen.`;
-                rememberEvent(healer, visitor ? "starclan_dream" : "dream", {
+            let threat = canForeseeDisaster && chance(.65) ? pending : null;
+            if (!threat && canScheduleWildfire() && chance(.04)) {
+                threat = queueWildfire(state.day + rand(2, 3), "dream");
+            }
+            if (!threat) {
+                const signReader = [healer, ...livingCats()].find(cat =>
+                    Number.isFinite(cat.moonpoolSignDay) && state.day - cat.moonpoolSignDay <= DAYS_PER_MOON);
+                const remembrance = ClanQuirks.remembranceDream(healer, visitor);
+                const description = remembrance || (signReader
+                    ? `${healer.name} dreamed of three ripples crossing Moonpool Hollow against the wind, just as ${signReader.name} had seen on patrol.`
+                    : visitor
+                    ? `${visitor.name} visited ${healer.name} in a dream. They sat together and talked beneath the stars until ${healer.name} woke up.`
+                    : `${healer.name} dreamed of stars reflected in still water and woke without a clear omen.`);
+                if (signReader && !remembrance) delete signReader.moonpoolSignDay;
+                rememberEvent(healer, visitor && (!signReader || remembrance) ? "starclan_dream" : "dream", {
                     description,
                     importance: 3,
-                    participants: visitor ? [visitor.id] : []
+                    participants: remembrance ? [visitor.id] : signReader && signReader !== healer ? [signReader.id] :
+                        visitor && !signReader ? [visitor.id] : []
                 });
                 logEvent("dream", description);
                 return false;
             }
+            const vision = threat.kind === "wildfire"
+                ? "flaming trees and dark ash falling like snow into the camp clearing" : "floodwater bursting through the camp entrance and washing away everything dear.";
             const omen = visitor
-                ? `${visitor.name} appeared in ${healer.name}'s dream and showed them floodwater rising through the camp.`
-                : `${healer.name} dreamed of floodwater rising through the camp.`;
-            state.medicineDream = { healerId: healer.id, day: state.day + rand(2, 4), omen, visitorId: visitor?.id };
+                ? `${visitor.name} appeared in ${healer.name}'s dream and showed them ${vision}.`
+                : `${healer.name} dreamed of ${vision}.`;
+            threat.omenSeen = true;
+            state.medicineDream = {
+                healerId: healer.id, day: threat.day, kind: threat.kind ?? "flood", weatherStart: threat.weatherStart, omen,
+                visitorId: visitor?.id
+            };
             return showMedicineDream();
         }
         return false;
@@ -2923,9 +3188,18 @@
         const disaster = state.disaster;
         if (!disaster || disaster.day > state.day) return "";
         state.disaster = null;
+        if (disaster.kind === "wildfire") return resolveWildfire(disaster);
 
-        const report = ["Floodwater swept through camp before dawn."];
+        const report = [disaster.weatherId === "thunderstorm"
+            ? "The thunderstorm raged through the night, causing the river to swell. A flood swept through camp before dawn."
+            : "Floodwater swept through camp before dawn."];
+        const suppliesMoved = (state.floodSuppliesSafeUntil ?? 0) >= state.day;
+        const preyLost = suppliesMoved ? 0 : Math.min(state.prey, dailyPreyNeed());
+        state.prey -= preyLost;
+        if (suppliesMoved) report.push("The prey and bedding were safe on higher ground.");
+        else if (preyLost) report.push(`The flood washed away ${preyLost} prey.`);
         const deaths = [];
+        let injuries = 0;
         for (const cat of livingCats()) {
             const prepared = disaster.warnClan || cat.id === disaster.healerId;
             const roll = Math.random();
@@ -2933,19 +3207,119 @@
                 deaths.push(cat.name);
                 recordDeath(cat, `${cat.name} died in the flood.`);
             } else if (roll < (prepared ? .09 : .30)) {
+                injuries++;
                 cat.health = Math.max(1, cat.health - rand(8, 20));
                 const recorded = CatConditions.add(cat, chance(.25) ? "brokenLeg" : "scrape", state.day,
                     (type, message) => report.push(message));
-                if (!recorded) report.push(`${cat.name} was hurt escaping the flood.`);
+                if (!recorded) report.push(`${cat.name} was injured while escaping the flood.`);
             }
         }
-        if (report.length === 1 && deaths.length === 0) report.push("Every cat escaped safely.");
+        if (deaths.length === 0 && injuries === 0) {
+            report.push("Every cat escaped safely.");
+        }
         const summary = report.join(" ");
         logEvent("disaster", summary);
         return deaths.length ? `${summary} ${new Intl.ListFormat("en").format(deaths)} died in the flood.` : summary;
     }
 
-    function runPatrol(locationId) {
+    function resolveWildfire(disaster) {
+        state.lastWildfireDay = state.day;
+        const territory = LOCATIONS.find(loc => loc.id === disaster.locationId);
+        const burnedUntil = state.day + 6;
+        (state.burnedTerritories ??= {})[territory.id] = burnedUntil;
+
+        const preyLost = Math.ceil(state.prey * (disaster.suppliesMoved ? .12 : .40));
+        const herbsLost = ClanHerbs.lose(state.herbInventory, disaster.suppliesMoved ? .10 : .30);
+        state.prey -= preyLost;
+        const report = [
+            `A wildfire swept through camp and scorched ${territory.name}.`,
+            `The clan lost ${preyLost} prey and ${herbsLost} herbs. ${territory.name} will be harder to patrol through Day ${burnedUntil}.`
+        ];
+
+        const cats = livingCats();
+        const exposed = cats.filter(cat => cat.id !== disaster.healerId);
+        const deceased = cats.length > 1 && exposed.length && chance(disaster.warnClan ? .10 : .35)
+            ? pick(exposed) : null;
+        if (deceased) {
+            recordDeath(deceased, `${deceased.name} died in the wildfire.`);
+            report.push(`${deceased.name} died in the wildfire.`);
+        }
+        const survivors = cats.filter(cat => cat !== deceased && cat.id !== disaster.healerId);
+        const injuryCount = Math.min(survivors.length, disaster.warnClan ? 1 : rand(1, 3));
+        for (let i = 0; i < injuryCount; i++) {
+            const [cat] = survivors.splice(rand(0, survivors.length - 1), 1);
+            cat.health = Math.max(1, cat.health - rand(8, 18));
+            CatConditions.add(cat, "burn", state.day, logEvent);
+            const description = `${cat.name} suffered a burn while escaping the wildfire.`;
+            report.push(description);
+            rememberEvent(cat, "wildfire_injury", { description, importance: 4 });
+        }
+        const summary = report.join(" ");
+        logEvent("disaster", summary);
+        return summary;
+    }
+
+    function findWildfireWarning(cats) {
+        const fire = state.disaster;
+        if (fire?.kind !== "wildfire" || fire.source !== "heat" || fire.warningResolved || fire.day <= state.day) return null;
+        const actor = cats.find(cat => cat.id === state.playerCatId && cat.age >= 6) ??
+            cats.find(cat => cat.rank === "Leader") ?? cats.find(cat => cat.age >= 6);
+        if (!actor) return null;
+        return {
+            participants: { actor },
+            event: {
+                id: "wildfire_warning",
+                title: "Smoke on the Wind",
+                description: "A smoky scent pervades the camp, setting cats on edge. A patrol returns, announcing the worst: a wildfire is spreading. Fast. The Clan looks on ${actor.name} to decide whether they should evacuate or bury their stores first.",
+                decisionMaker: "actor",
+                npcChoice: "evacuate",
+                choices: [
+                    { id: "evacuate", text: "Lead the Clan out of camp" },
+                    { id: "save_stores", text: "Bury the prey and herbs" }
+                ].map(choice => ({
+                    ...choice,
+                    effects: [{ type: "wildfire_warning", action: choice.id, day: fire.day }]
+                }))
+            }
+        };
+    }
+
+    function resolveWildfireWarning(effect, actor) {
+        const fire = state.disaster;
+        if (fire?.kind !== "wildfire" || fire.day !== effect.day || fire.warningResolved) return;
+        fire.warningResolved = true;
+        const evacuate = effect.action === "evacuate";
+        if (evacuate) fire.warnClan = true;
+        else fire.suppliesMoved = true;
+        const description = evacuate
+            ? `${actor.name} led the Clan away before the fire reached camp.`
+            : `${actor.name} helped bury a cache of prey and herbs to protect it from the fire.`;
+        rememberEvent(actor, "wildfire_warning", { description, importance: 4 });
+        return description;
+    }
+
+    function planManualPatrol(loc, candidates, player) {
+        const playerGathers = player?.rank === "Medicine Cat" && player.lastHerbDay !== state.day &&
+            candidates.includes(player);
+        const patrol = ClanPatrols.selectTeam(loc, candidates, player, playerGathers ? "healing" : undefined);
+        const healer = player?.rank === "Medicine Cat" && patrol.includes(player)
+            ? player : patrol.find(cat => cat.rank === "Medicine Cat");
+        return { patrol, healer, patrolHealer: healer?.lastHerbDay !== state.day ? healer : undefined };
+    }
+
+    function resolveRescueDeaths(fallen, describeCause, preferredSurvivor) {
+        if (fallen.length === 1) recordDeath(fallen[0], describeCause(fallen[0]));
+        if (fallen.some(cat => cat.id === state.playerCatId)) {
+            state.playerCatId = preferredSurvivor?.id ?? livingCats().find(cat => !fallen.includes(cat))?.id ?? null;
+        }
+        if (fallen.some(cat => cat.id === selectedCatId)) selectedCatId = state.playerCatId;
+        if (fallen.length > 1) {
+            for (const cat of fallen) recordDeath(cat, describeCause(cat));
+        }
+        resolveLeadershipVacancy();
+    }
+
+    function runPatrol(locationId, returning = false) {
         const loc = LOCATIONS.find(l => l.id === locationId);
         if (!loc) return;
 
@@ -2959,15 +3333,7 @@
             return;
         }
 
-        const patrol = candidates
-            .sort((a, b) =>
-                Number(b === player && b.rank === "Medicine Cat") -
-                Number(a === player && a.rank === "Medicine Cat") ||
-                CatConditions.skill(b, loc.skill) - CatConditions.skill(a, loc.skill))
-            .slice(0, 3);
-        const healer = player?.rank === "Medicine Cat" && player.lastHerbDay === state.day
-            ? player
-            : patrol.find(cat => cat.rank === "Medicine Cat");
+        const { patrol, healer, patrolHealer } = planManualPatrol(loc, candidates, player);
         if (healer?.lastHerbDay === state.day && healer.lastHerbNoticeDay !== state.day) {
             healer.lastHerbNoticeDay = state.day;
             saveGame(false);
@@ -2975,35 +3341,74 @@
             return;
         }
 
-        const result = resolvePatrol(loc, patrol, healer?.lastHerbDay !== state.day ? healer : undefined);
-        saveGame(false);
+        if (!returning && patrol.includes(player) && StoryEvents.readyAfterFall(player) && StoryEvents.showRecoveredPatrolChoice(player)) return;
+        const result = resolvePatrol(loc, patrol, patrolHealer);
         showNotice(result);
         render();
+        if (!patrolHealer && loc.prey[1] > 0) handlePatrolConflict(patrol, true);
+        saveGame(false);
     }
 
     function canPatrol(cat) {
         return cat.age >= 6 && cat.health > 20 && cat.energy > 15 && !cat.quarantined;
     }
 
-    function shortHuntCandidate() {
+    function dailyPreyNeed(catCount = livingCats().length) {
+        return Math.max(2, Math.ceil(catCount * .45));
+    }
+
+    function expectedMeals(cats = livingCats()) {
+        return cats.filter(cat => cat.hunger + 14 > 35).length;
+    }
+
+    function mealForecastText() {
+        const need = expectedMeals();
+        return `${need} ${need === 1 ? "cat needs" : "cats need"} food tonight · ${state.prey} portions available` +
+            (need > state.prey ? ` · ${need - state.prey} short` : "");
+    }
+
+    function canPlanCampRest() {
         const cats = livingCats();
-        if (state.lastShortHuntDay === state.day || cats.some(canPatrol)) return null;
-        return cats.filter(cat => cat.age >= 6 && cat.health > 0 && !cat.quarantined)
+        return cats.length > 0 && state.prey >= Math.max(1, expectedMeals(cats));
+    }
+
+    function toggleCampRest() {
+        if (state.campRestDay === state.day + 1) delete state.campRestDay;
+        else if (canPlanCampRest()) state.campRestDay = state.day + 1;
+        saveGame(false);
+        render();
+    }
+
+    function shortHuntCandidate(excludedId) {
+        const cats = livingCats();
+        if (state.lastShortHuntDay === state.day ||
+            (state.prey >= Math.max(1, expectedMeals(cats)) && cats.some(canPatrol))) return null;
+        return cats.filter(cat => cat.id !== excludedId && cat.age >= 6 && cat.health > 0 && !cat.quarantined)
             .sort((a, b) => b.health - a.health || b.energy - a.energy)[0];
     }
 
-    function runShortHunt() {
+    function runShortHunt(priority) {
         const hunter = shortHuntCandidate();
         if (!hunter) return;
+        const message = resolveShortHunt(hunter, priority);
+        saveGame(false);
+        render();
+        showNotice(message);
+    }
 
+    function resolveShortHunt(hunter, priority = "weakest") {
         state.lastShortHuntDay = state.day;
         hunter.energy = Math.max(0, hunter.energy - 5);
         const portions = rand(2, 4);
+        const dutyRank = cat => cat.rank === "Medicine Cat" ? 0 :
+            cat.age >= 6 && !cat.quarantined && CatConditions.skill(cat, "hunting") >= 4 ? 1 : 2;
         const fed = livingCats().filter(cat => cat.hunger > 35)
-            .sort((a, b) => a.health - b.health || b.hunger - a.hunger)
+            .sort((a, b) => (priority === "working" ? dutyRank(a) - dutyRank(b) : 0) ||
+                a.health - b.health || b.hunger - a.hunger)
             .slice(0, portions);
         for (const cat of fed) {
             cat.hunger = Math.max(0, cat.hunger - rand(45, 55));
+            if (cat.hunger <= 45 && cat.health <= 24) cat.health = Math.min(100, cat.health + 4);
         }
         state.prey += portions - fed.length;
 
@@ -3012,74 +3417,210 @@
             : " The catch went to the prey pile.";
         const message = `${hunter.name} brought back ${portions} prey from a short hunt near camp.${meals}`;
         logEvent("patrol", message);
-        saveGame(false);
-        render();
-        showNotice(message);
+        return message;
+    }
+
+    function hasShelteredHuntFallback(loc, weather, goal) {
+        return loc.id === "pinewood" && weather.risk === 0 && goal.name === "hunting" && goal.score >= 5;
+    }
+
+    function applyPatrolHeat(patrol, risk) {
+        if (!risk) return [];
+        const affected = [];
+        for (const cat of patrol) {
+            if (!cat.alive || cat.conditions?.some(condition => condition.id === "heatExhaustion") || !chance(risk)) continue;
+            const severity = cat.energy <= 25 ? "serious" : "mild";
+            CatConditions.add(cat, "heatExhaustion", state.day, logEvent, 0, severity);
+            affected.push(`${cat.name} developed ${severity} heat exhaustion.`);
+        }
+        return affected;
     }
 
     function resolvePatrol(loc, patrol, healer) {
         CatConditions.recordContact(patrol, "patrol", state.day);
+        for (const cat of patrol.filter(StoryEvents.readyAfterFall)) StoryEvents.rememberReturnPatrol(cat, loc);
+        const weather = ClanWeather.patrolEffects(state, seasonName(), loc);
+        const plan = ClanPatrols.plan(loc, patrol, weather, healer);
+        const { goal, safety, yieldRole } = plan;
 
-        patrol.forEach(c => {
-            c.energy = clamp(c.energy - rand(10, 22), 0, 100);
-            c.hunger = clamp(c.hunger + rand(8, 15), 0, 100);
-            c.experience += rand(1, 3);
-        });
+        for (const cat of patrol) {
+            cat.energy = clamp(cat.energy - rand(10, 22) - weather.energy + plan.energySaved, 0, 100);
+            cat.hunger = clamp(cat.hunger + rand(8, 15), 0, 100);
+            cat.experience += rand(1, 3);
+        }
 
-        if (chance(activePredatorRisk())) {
-            const result = window.StoryEvents.resolveFootprintsEncounter(patrol, false, activePredatorRisk(), true);
-            const outcome = applyEncounterResult(result, patrol);
+        const predatorRisk = activePredatorRisk();
+        if (chance(predatorRisk)) {
+            const result = window.StoryEvents.resolveFootprintsEncounter(patrol, false, predatorRisk, true);
+            const outcome = [applyEncounterResult(result, patrol), ...applyPatrolHeat(patrol, weather.heatExhaustionRisk)].join(" ");
+            if (result.successful) strengthenPatrolRelationships(patrol);
             logEvent("patrol", outcome);
             return outcome;
         }
 
-        const skillTotal = patrol.reduce(
-            (n, c) => n + CatConditions.skill(c, loc.skill, 1), 0
-        );
-
-        const success = Math.random() <
-            clamp(.45 + skillTotal / (patrol.length * 12) - loc.risk * .08, .18, .9);
-
-        let result;
-
+        const success = !healer && chance(plan.goalChance);
+        const injury = chance(plan.injuryChance);
+        const names = new Intl.ListFormat("en").format(patrol.map(cat => cat.name));
+        const report = [];
+        let completedGoal = false;
         if (healer) {
-            result = gatherHerbs(healer, loc);
+            const stock = ClanHerbs.total(state.herbInventory);
+            report.push(gatherHerbs(healer, loc));
+            completedGoal = ClanHerbs.total(state.herbInventory) > stock;
         } else if (loc.id === "moonpool") {
-            result = `${patrol.map(c => c.name).join(", ")} visited Moonpool Hollow. A pale reflection rippled across the water, though no cloud crossed the stars.`;
-
-            patrol.forEach(c => {
-                c.skills.intuition = clamp((c.skills.intuition || 1) + 1, 0, 10);
-            });
-
-            logEvent("lore", result);
-        } else if (success) {
-            const prey = rand(loc.prey[0], loc.prey[1]);
-            state.prey += prey;
-
-            result = `${patrol.map(c => c.name).join(", ")} returned from ${loc.name} ${prey ? `with ${prey} prey` : "with a useful discovery"}.`;
-
-            if (chance(.25)) {
-                const cat = pick(patrol);
-                cat.skills[loc.skill] = clamp((cat.skills[loc.skill] || 1) + 1, 0, 10);
-                result += ` ${cat.name} learned something new about ${loc.skill}.`;
+            if (success) {
+                completedGoal = true;
+                const sign = `${goal.lead.name} saw three ripples cross Moonpool Hollow against the wind.`;
+                goal.lead.moonpoolSignDay = state.day;
+                rememberEvent(goal.lead, "moonpool_sign", { description: sign, importance: 3 });
+                logEvent("lore", sign);
+                report.push(sign);
+            } else {
+                report.push(`${names} visited Moonpool Hollow. The water held only their reflections.`);
             }
-
-            logEvent("patrol", result);
+        } else if (success) {
+            const prey = ClanQuirks.patrolPrey(patrol, Math.max(0, rand(loc.prey[0], loc.prey[1]) + weather.prey + plan.bonusPrey));
+            state.prey += prey;
+            completedGoal = prey > 0 || goal.name === "curiosity";
+            if (goal.name === "curiosity") {
+                report.push(`${goal.lead.name} discovered a passage beneath the stone walls of ${loc.name}.`);
+                if (prey) report.push(`The patrol also returned with ${prey} prey.`);
+            } else {
+                report.push(prey
+                    ? `${goal.lead.name} led the hunt at ${loc.name}. The patrol brought back ${prey} prey.`
+                    : `${goal.lead.name} led the hunt at ${loc.name}, but the patrol returned empty-pawed.`);
+            }
+            if (plan.bonusPrey && yieldRole && prey) {
+                report.push(yieldRole.name === "swimming"
+                    ? `${yieldRole.lead.name} reached a deeper fishing spot.`
+                    : `${yieldRole.lead.name} crept close to prey without being seen.`);
+            }
+        } else if (hasShelteredHuntFallback(loc, weather, goal)) {
+            state.prey++;
+            completedGoal = true;
+            report.push(`The main hunt went poorly, but ${goal.lead.name} found one prey near the sheltered trail.`);
         } else {
-            const cat = pick(patrol);
-            const damage = rand(8, 20);
-
-            cat.health = clamp(cat.health - damage, 0, 100);
-
-            result = `${patrol.map(c => c.name).join(", ")} struggled on ${loc.name}. ${cat.name} ${cat.health === 0
-                ? "died from their injuries."
-                : `returned scratched and shaken (-${damage} health).`}`;
-
-            logEvent("patrol", result);
-            if (cat.health === 0) recordDeath(cat, `${cat.name} died from their patrol injuries.`);
+            report.push(goal.name === "curiosity"
+                ? `${goal.lead.name} searched ${loc.name} but found nothing of interest.`
+                : `${goal.lead.name} led the hunt at ${loc.name}, but the patrol returned empty-pawed.`);
         }
 
-        return result;
+        if (injury) {
+            const hurt = pick(patrol);
+            const medic = ClanPatrols.role(patrol, "healing");
+            const aid = medic.score >= 4 ? Math.floor(medic.score / 2) : 0;
+            const damage = Math.min(hurt.health - 1, rand(6, 14) - aid);
+            hurt.health -= damage;
+            CatConditions.add(hurt, "scrape", state.day, logEvent);
+            report.push(`${hurt.name} was hurt along the route (-${damage} health).`);
+            if (aid) report.push(`${medic.lead.name} tended the injury on the way home.`);
+        } else {
+            report.push(`${safety.lead.name} guided the patrol home safely.`);
+        }
+        if (plan.energySaved) {
+            report.push(`${plan.stamina.lead.name} set a steady pace, saving each cat ${plan.energySaved} energy.`);
+        }
+
+        if (chance(.25)) {
+            const practiced = pick([goal, safety]);
+            const learner = patrol.find(cat => cat.rank === "Apprentice" && cat !== practiced.lead &&
+                (cat.skills[practiced.name] ?? 0) < (practiced.lead.skills[practiced.name] ?? 0)) ?? practiced.lead;
+            const current = learner.skills[practiced.name] ?? 0;
+            if (current < 10) {
+                learner.skills[practiced.name] = current + 1;
+                report.push(`${learner.name} gained practice in ${practiced.name}.`);
+            }
+        }
+        const outcome = [...report, ...applyPatrolHeat(patrol, weather.heatExhaustionRisk)].join(" ");
+        if (completedGoal) strengthenPatrolRelationships(patrol);
+        logEvent("patrol", outcome);
+        return outcome;
+    }
+
+
+    function strengthenPatrolRelationships(patrol) {
+        Relationships.strengthenPatrolBonds(patrol);
+        const survivors = patrol.filter(cat => cat.alive);
+        for (const [index, first] of survivors.entries()) {
+            for (const second of survivors.slice(index + 1)) {
+                if (!Relationships.enmityWith(first, second) && !Relationships.enmityWith(second, first)) {
+                    refreshMutualCrush(first, second);
+                }
+            }
+        }
+    }
+
+    function handlePatrolConflict(patrol, playerPatrol = false) {
+        if (!$("questCard").hidden) return;
+        const survivors = patrol.filter(cat => cat.alive);
+        const scenes = [];
+        for (const actor of survivors) {
+            for (const other of survivors) {
+                if (actor === other) continue;
+                const rivalry = Relationships.rivalriesWith(actor, other)
+                    .reduce((strongest, entry) => !strongest || entry.intensity > strongest.intensity ? entry : strongest, null);
+                const enmity = Relationships.enmityWith(actor, other);
+                for (const conflict of [enmity, rivalry].filter(Boolean)) {
+                    const event = StoryEvents.buildPatrolConflict(actor, other, conflict === enmity);
+                    if (StoryEvents.canPairExperienceEvent(event, actor, other)) {
+                        scenes.push({
+                            actor, other, event,
+                            rivalry: conflict === rivalry ? rivalry : null,
+                            enmity: conflict === enmity ? enmity : null
+                        });
+                    }
+                }
+            }
+        }
+        const playerScenes = scenes.filter(scene => scene.actor.id === state.playerCatId);
+        if (!scenes.length) return;
+        const scene = pick(playerScenes.length ? playerScenes : scenes);
+        if (!chance(.20 + .12 * (scene.enmity?.distrust ?? scene.rivalry.intensity))) return;
+        const { actor, other, rivalry, enmity, event } = scene;
+        const participants = { actor, other };
+
+        function resolve(choice) {
+            let outcome = choice.outcome;
+            if (choice.id === "accept") {
+                if (Relationships.easeDistrust(actor, other)) {
+                    outcome += ` ${actor.name} let go of their grudge.`;
+                }
+                setRelationship(actor, other, relationship(actor, other) + 4);
+            } else if (choice.id === "rematch") {
+                Relationships.adjustRivalry(actor, other, rivalry, 1, state.day);
+            } else if (choice.id === "concede") {
+                Relationships.adjustRivalry(actor, other, rivalry, -1, state.day);
+                setRelationship(actor, other, relationship(actor, other) + 3);
+            } else if (choice.id === "accuse") {
+                Relationships.recordGrievance(other, actor, "unfair_accusation",
+                    `hunt:${state.day}:${actor.id}:${other.id}`, state.day);
+                setRelationship(actor, other, relationship(actor, other) - 8);
+            }
+            recordCatEvent(enmity ? "patrol_trust" : "patrol_rivalry", [actor, other], {
+                description: outcome, importance: 3, logToChronicle: true
+            });
+            if (playerPatrol) {
+                saveGame(false);
+                render();
+                showNotice(outcome);
+            }
+        }
+
+        if (actor.id === state.playerCatId) {
+            StoryEvents.showStoryEvent(event, participants, resolve);
+            return;
+        }
+        const confrontational = ["proud", "stubborn", "wary"].includes(actor.personality);
+        let choiceId;
+        if (enmity) {
+            choiceId = chance(confrontational ? .30 : .65) ? "accept" : "doubt";
+        } else if (confrontational && chance(.25)) {
+            choiceId = "accuse";
+        } else {
+            choiceId = chance(confrontational ? .75 : .45) ? "rematch" : "concede";
+        }
+        StoryEvents.recordEventParticipants(event, participants);
+        resolve(event.choices.find(choice => choice.id === choiceId));
     }
 
     function overallSkill(cat) {
@@ -3183,12 +3724,15 @@
     }
 
     function runNpcLeaderDay() {
+        if (state.campRestDay === state.day) return [];
         const leader = livingCats().find(cat => cat.rank === "Leader");
         if (!leader || leader.id === state.playerCatId) return [];
 
         const deputy = preferredWarrior(leader, deputyCandidates(leader));
         if (deputy) appointDeputy(leader, deputy);
-        if (leader.quarantined || leader.health <= 20) return [];
+        const shortHunter = shortHuntCandidate(state.playerCatId);
+        if (shortHunter) resolveShortHunt(shortHunter);
+        if (leader.quarantined || leader.health <= 20) return shortHunter ? [shortHunter] : [];
 
         const cats = livingCats();
         const mentors = cats.filter(cat =>
@@ -3213,17 +3757,15 @@
         }
 
         const location = LOCATIONS.find(loc => loc.id === "pinewood");
-        const huntingScore = cat => CatConditions.skill(cat, "hunting") * 2 +
-            CatConditions.skill(cat, location.skill);
-        const patrol = cats.filter(cat => cat.id !== state.playerCatId &&
-            ["Leader", "Deputy", "Warrior", "Apprentice"].includes(cat.rank) && canPatrol(cat))
-            .sort((a, b) => huntingScore(b) - huntingScore(a) || b.energy - a.energy)
-            .slice(0, 3);
+        const candidates = cats.filter(cat => cat.id !== state.playerCatId && cat !== shortHunter &&
+            ["Leader", "Deputy", "Warrior", "Apprentice"].includes(cat.rank) && canPatrol(cat));
+        const patrol = ClanPatrols.selectTeam(location, candidates);
         if (patrol.length) {
             logEvent("patrol", `${leader.name} sent ${patrol.map(cat => cat.name).join(", ")} to hunt at ${location.name}.`);
             resolvePatrol(location, patrol);
+            handlePatrolConflict(patrol);
         }
-        return patrol;
+        return shortHunter ? [...patrol, shortHunter] : patrol;
     }
     function trainPlayer() {
         const c = playerCat();
@@ -3265,14 +3807,30 @@
         const others = livingCats().filter(x => x.id !== c.id && !x.quarantined);
         if (!others.length) return;
 
-        const other = pick(others);
+        const loveInterests = others.filter(other => StoryEvents.playerConfession(c, other));
+        const other = pick(loveInterests.length && chance(.65) ? loveInterests : others);
         StoryEvents.showClanmateConversation(c, other, choice => {
             CatConditions.recordContact([c, other], "conversation", state.day);
+            if (choice.talkAboutFeelings) {
+                const event = StoryEvents.playerConfession(c, other);
+                if (event) {
+                    StoryEvents.recordEvent(event);
+                    StoryEvents.showStoryEvent(event, { confessor: c, target: other }, (response, participants) => {
+                        const outcome = applyStoryChoice(response, participants) || response.outcome;
+                        logEvent("story", `${event.title} - ${outcome}`);
+                        saveGame(false);
+                        render();
+                        showNotice(outcome);
+                    });
+                    return;
+                }
+            }
             let text = choice.outcome;
             if (choice.spendTime) {
                 const bond = relationship(c, other);
                 const gain = window.Relationships.routineBondGain(bond, rand(3, 6));
                 setRelationship(c, other, bond + gain);
+                refreshMutualCrush(c, other);
                 c.energy = clamp(c.energy - 4, 0, 100);
                 text += ` Their bond is now ${relationshipLabel(relationship(c, other))}.`;
                 const newCrushes = [tryDevelopCrush(c, other), tryDevelopCrush(other, c)].filter(Boolean);
@@ -3414,6 +3972,20 @@
 
         apprentice.notes.push(text);
         logEvent("training", text);
+        if (apprentice.mentorId !== mentor.id || !chance(.35)) return;
+        const event = { id: "mentor_rivalry", pairCooldown: 12 };
+        const students = apprentices.filter(cat => cat !== apprentice && cat.mentorId === mentor.id &&
+            StoryEvents.canPairExperienceEvent(event, cat, apprentice));
+        if (!students.length) return;
+        const overlooked = pick(students);
+        if (Relationships.startRivalry(overlooked, apprentice, "mentor_praise", mentor.id, state.day)) {
+            StoryEvents.recordPairEvent(event.id, overlooked, apprentice);
+            rememberEvent(overlooked, "became_rivals", {
+                description: `${overlooked.name} heard ${mentor.name} praise ${apprentice.name}'s training and decided to outdo them next time.`,
+                importance: 3, participants: [apprentice.id, mentor.id]
+            });
+            logEvent("training", `${mentor.name} praised ${apprentice.name}'s effort. ${overlooked.name} vowed to do better next time.`);
+        }
     }
 
 
@@ -3557,9 +4129,7 @@
                 livingCats().some(candidate => candidate.id === id)
             );
 
-            const crush = livingCats().find(candidate =>
-                candidate.id === pick(crushIds)
-            );
+            const crush = getCat(pick(crushIds));
 
             if (crush) {
                 const listeners = [cat, other];
@@ -3587,23 +4157,24 @@
                             crush.id
                         );
 
-                        if (gossip && window.Gossip.recordGossip(listener, gossip)) {
-                            window.SocialReactions.reactToGossip(listener, gossip);
-                            const secretDay = subject.relationships.secretPartners?.[crush.id];
-                            learnAboutOutsideTie(listener, subject, {
-                                id: crush.id,
-                                day: secretDay ?? subject.relationships.crushStartDays?.[crush.id] ?? 0,
-                                type: secretDay === undefined ? "crush" : "relationship"
+                        if (!window.Gossip.recordGossip(listener, gossip)) return;
+
+                        // Only the cat who heard the gossip knows about the competition.
+                        if (listener.relationships.crushes.includes(crush.id) &&
+                            subject.relationships.crushes.includes(crush.id) &&
+                            Relationships.startRivalry(listener, subject, "shared_crush", crush.id, state.day)) {
+                            rememberEvent(listener, "became_rivals", {
+                                description: `${listener.name} learned that ${subject.name} had feelings for the same cat.`,
+                                importance: 3, participants: [subject.id], privateOwnerId: listener.id
                             });
                         }
-
-                        // Shared feelings only cause rivalry when discovered.
-                        if (
-                            (listener.relationships.crushes || []).includes(crush.id) &&
-                            shareCrushOnSameCat(listener, subject)
-                        ) {
-                            createCrushRivalry(listener, subject, crush);
-                        }
+                        window.SocialReactions.reactToGossip(listener, gossip);
+                        const secretDay = subject.relationships.secretPartners?.[crush.id];
+                        learnAboutOutsideTie(listener, subject, {
+                            id: crush.id,
+                            day: secretDay ?? subject.relationships.crushStartDays?.[crush.id] ?? 0,
+                            type: secretDay === undefined ? "crush" : "relationship"
+                        });
                     });
 
                     return `${cat.name} and ${other.name} discussed ${subject.name}'s feelings for ${crush.name}.`;
@@ -3622,25 +4193,7 @@
         return pick(rumors);
     }
 
-    function startGiftStory() {
-        if (state.day < (state.nextGiftStoryDay ?? 5) || !chance(.2)) return;
-        const adults = livingCats().filter(cat => cat.age >= 12);
-        const candidates = [];
-        for (const giver of adults) {
-            if (giver.id === state.playerCatId || giver.hiddenQuirk) continue;
-            for (const friend of adults) {
-                if (friend === giver || relationship(giver, friend) < 35) continue;
-                const others = adults.filter(cat =>
-                    cat !== giver && cat !== friend && relationship(friend, cat) >= 12
-                );
-                if (others.length) candidates.push({ giver, friend, others });
-            }
-        }
-        if (!candidates.length) return;
-        const { giver, friend, others } = pick(candidates);
-        const rival = pick(others);
-        giver.hiddenQuirk = "secret_gift_giver";
-        giver.hiddenMotive = "possessive_friend";
+    function startGiftStory(giver, friend, rival) {
         state.giftStory = {
             giverId: giver.id, friendId: friend.id, rivalId: rival.id,
             stage: "rumor", nextDay: state.day + 3
@@ -3657,11 +4210,7 @@
 
     function advanceGiftStory() {
         const story = state.giftStory;
-        if (!story) {
-            startGiftStory();
-            return Boolean(state.giftStory);
-        }
-        if (story.nextDay > state.day) return false;
+        if (!story || story.nextDay > state.day) return false;
 
         const giver = getCat(story.giverId);
         const friend = getCat(story.friendId);
@@ -3670,9 +4219,11 @@
             finishGiftStory();
             return false;
         }
+        const rumorId = story.rumorId ??= `blue-feather:${story.nextDay}:${giver.id}:${friend.id}`;
 
         if (story.stage === "rumor") {
             const description = `${friend.name} heard that ${rival.name} had been mocking them after patrol. They started keeping their distance.`;
+            Relationships.recordGrievance(friend, rival, "hurtful_rumor", rumorId, state.day);
             setRelationship(friend, rival, relationship(friend, rival) - 12);
             recordCatEvent("hurtful_rumor", [friend, rival], {
                 description, importance: 3, logToChronicle: true
@@ -3684,7 +4235,8 @@
 
         const viewpoint = getCat(state.playerCatId);
         const witness = viewpoint && viewpoint !== giver ? viewpoint : rival;
-        const disclosure = `${witness.name} heard ${giver.name} admit to leaving the blue feather and making up the story about ${rival.name}. ${giver.name} wanted ${friend.name} all to themself.`;
+        const motive = ClanQuirks.motives[giver.hiddenMotive] ?? ClanQuirks.motives.possessive_friend;
+        const disclosure = `${witness.name} heard ${giver.name} admit to leaving the blue feather and making up the story about ${rival.name}. ${giver.name} explained why. ${motive.line}`;
         const choices = [
             { id: "confront", text: "Confront the gift-giver in front of the clan" },
             { id: "warn", text: `Tell ${friend.name} in private` },
@@ -3694,6 +4246,7 @@
 
         function resolve(choice) {
             if (state.giftStory !== story) return;
+            ClanQuirks.rememberDiscovery(witness, giver, true);
             rememberEvent(witness, "uncovered_gift_giver", {
                 description: disclosure, importance: 4, participants: [giver.id],
                 privateOwnerId: witness.id
@@ -3702,7 +4255,12 @@
             const exposed = choice.id === "confront";
             let outcome = `${witness.name} kept what they heard to themself.`;
             if (choice.id !== "keep" || witness === friend) {
+                ClanQuirks.rememberDiscovery(friend, giver);
                 const description = `${friend.name} learned that ${giver.name} spread a false rumor to come between them and ${rival.name}.`;
+                Relationships.resolveGrievance(friend, rival, rumorId);
+                Relationships.recordGrievance(friend, giver, "false_rumor", rumorId, state.day, {
+                    strength: 2, privateOwnerId: exposed ? null : friend.id
+                });
                 rememberEvent(friend, "betrayed_by_friend", {
                     description, importance: 5, participants: [giver.id, rival.id],
                     rumorStarterId: giver.id,
@@ -3713,7 +4271,7 @@
                 }
                 setRelationship(friend, rival, relationship(friend, rival) + 12);
                 if (exposed) {
-                    giver.giftStoryExposed = true;
+                    giver.quirkPublic = true;
                     giver.respect = clamp((giver.respect ?? 50) - 10, 0, 100);
                 }
                 if (choice.id !== "keep") {
@@ -3734,7 +4292,7 @@
                 witness.trust = clamp((witness.trust ?? 50) + 5, 0, 100);
                 setRelationship(recipient, witness, relationship(recipient, witness) + 5);
             }
-            logEvent("story", outcome);
+            if (exposed) logEvent("story", outcome);
             finishGiftStory();
             saveGame(false);
             render();
@@ -3754,16 +4312,212 @@
         return true;
     }
 
+    function findWeatherStory(cats) {
+        const spell = state.weather?.spell;
+        if (!spell || spell.sceneResolved || spell.endsDay < state.day) return null;
+        const actor = cats.find(cat => cat.id === state.playerCatId && cat.age >= 6) ??
+            cats.find(cat => cat.rank === "Leader") ?? cats.find(cat => cat.age >= 6);
+        if (!actor) return null;
+
+        let title, description, options, npcChoice, recipient;
+        if (spell.id === "thunderstorm") {
+            title = "Thunder Over Camp";
+            const approaching = spell.startsDay > state.day;
+            const opening = approaching
+                ? "Angry, dark clouds cover the sky above camp, threatening a downpour. Nearby, thunder can be heard."
+                : "A peal of thunder cracks above the camp, reverberating through the dens and causing a clanmate to yelp in surprise. After a heartbeat, drops of rain begin to steadily come down.";
+            const danger = state.disaster?.weatherStart === spell.startsDay
+                ? "The river is quickly rising. There is enough time to evacuate the Clan or secure its supplies."
+                : "The Clan has time to move to higher ground or secure its supplies.";
+            description = `${opening} ${danger}`;
+            options = [
+                ["evacuate_storm", "Get the Clan to higher ground"],
+                ["move_supplies", "Carry the prey and bedding above the flood line"]
+            ];
+            npcChoice = "evacuate_storm";
+        } else if (spell.id === "rain") {
+            title = "The Rising Bend";
+            description = spell.startsDay > state.day
+                ? "Rain clouds gather over Glassriver Bend. There is still time to carry the Clan's supplies above the flood line."
+                : "Glassriver Bend is rising above its banks. The Clan can still carry its supplies above the flood line.";
+            options = [["move_supplies", "Move the prey and bedding to higher ground"], ["wait", "Leave the supplies where they are"]];
+            npcChoice = "move_supplies";
+        } else if (spell.id === "frost") {
+            title = spell.startsDay > state.day ? "Before the First Frost" : "The First Frost";
+            description = "The air has turned crisp and cold. The Clan still has time to prepare, but must choose a task to prioritize.";
+            options = [["gather", "Gather extra herbs"], ["hunt", "Bring in extra prey"], ["shelter", "Reinforce the nursery and dens"]];
+            npcChoice = state.prey < expectedMeals() ? "hunt" : ClanHerbs.total(state.herbInventory) < 4 ? "gather" : "shelter";
+        } else if (spell.startsDay > state.day) {
+            return null;
+        } else if (spell.id === "heat") {
+            recipient = pick(cats.filter(cat => cat !== actor));
+            if (!recipient) return null;
+            title = "A Place in the Shade";
+            const enemies = Relationships.enmityWith(recipient, actor);
+            const rivals = Relationships.rivalriesWith(recipient, actor).length;
+            const reaction = enemies ? "They give you a wary look." :
+                rivals ? "They ask which of you spotted it first." : "They make room beside them.";
+            description = `${actor.name} and ${recipient.name} reach the same patch of shade. ${reaction}`;
+            options = [["share_shade", "Share the shade"], ["give_shade", `Give ${recipient.name} the spot`]];
+            npcChoice = enemies ? "give_shade" : "share_shade";
+        } else if (spell.id === "snow" && state.prey > 0 && state.prey < expectedMeals()) {
+            recipient = cats.filter(cat => cat !== actor)
+                .sort((a, b) => b.hunger - a.hunger || a.health - b.health)[0];
+            if (!recipient) return null;
+            title = "The Last Mouse";
+            description = `Snow has covered the hunting trails. ${actor.name} finds a mouse in the nearly empty prey pile as ${recipient.name} comes looking for food.`;
+            options = [["give_mouse", `Give the mouse to ${recipient.name}`], ["split_mouse", "Split the mouse"]];
+            npcChoice = recipient.hunger >= actor.hunger ? "give_mouse" : "split_mouse";
+        } else {
+            return null;
+        }
+
+        return {
+            participants: recipient ? { actor, recipient } : { actor },
+            event: {
+                id: `weather_${spell.id}`, title, description, decisionMaker: "actor", npcChoice,
+                choices: options.map(([id, text]) => ({
+                    id, text, effects: [{ type: "weather_choice", action: id, spellStart: spell.startsDay }]
+                }))
+            }
+        };
+    }
+
+    function resolveWeatherChoice({ action, spellStart }, { actor, recipient }) {
+        const spell = state.weather?.spell;
+        if (spell?.startsDay !== spellStart || spell.sceneResolved) return;
+        spell.sceneResolved = true;
+        let outcome;
+        switch (action) {
+            case "evacuate_storm": {
+                const flood = state.disaster;
+                const pendingFlood = flood?.weatherStart === spell.startsDay && flood.day > state.day;
+                if (pendingFlood) flood.warnClan = true;
+                outcome = `${actor.name} led the clan to high ground to wait out the thunderstorm.`;
+                break;
+            }
+            case "move_supplies":
+                state.floodSuppliesSafeUntil = spell.endsDay + 2;
+                actor.energy = Math.max(0, actor.energy - 5);
+                outcome = `${actor.name} moved the prey and bedding above the flood line.`;
+                break;
+            case "gather": {
+                const stock = state.herbInventory;
+                const herb = [...ClanHerbs.medicinal].sort((a, b) => ClanHerbs.count(stock, a) - ClanHerbs.count(stock, b))[0];
+                stock[herb.id] = ClanHerbs.count(stock, herb) + 2;
+                outcome = `${actor.name} helped add 2 × ${herb.name} to the den before the frost.`;
+                break;
+            }
+            case "hunt":
+                state.prey += 3;
+                outcome = `${actor.name} helped bring in three prey before the frost.`;
+                break;
+            case "shelter":
+                state.nurseryShelterUntil = state.weather.seasonStart + ClanWeather.DAYS_PER_SEASON * 2 - 1;
+                outcome = `${actor.name} helped reinforce the dens. Cats will have more warm, sheltered space during Leaf-bare snow.`;
+                break;
+            case "share_shade":
+            case "give_shade": {
+                const shared = action === "share_shade";
+                recipient.energy = Math.min(100, recipient.energy + (shared ? 6 : 10));
+                if (shared) actor.energy = Math.min(100, actor.energy + 6);
+                setRelationship(actor, recipient, relationship(actor, recipient) + 3);
+                outcome = shared
+                    ? `${actor.name} and ${recipient.name} cooled down in the shade together.`
+                    : `${actor.name} let ${recipient.name} rest in the shade.`;
+                break;
+            }
+            case "give_mouse":
+            case "split_mouse": {
+                if (state.prey < 1) return "The prey pile was already empty.";
+                const shared = action === "split_mouse";
+                state.prey--;
+                recipient.hunger = Math.max(0, recipient.hunger - (shared ? 22 : 45));
+                if (shared) actor.hunger = Math.max(0, actor.hunger - 22);
+                setRelationship(actor, recipient, relationship(actor, recipient) + 4);
+                outcome = shared
+                    ? `${actor.name} split the mouse with ${recipient.name}.`
+                    : `${actor.name} gave ${recipient.name} the mouse.`;
+                break;
+            }
+            default:
+                outcome = `${actor.name} decided to leave the supplies in camp.`;
+        }
+        recordCatEvent(`weather_${spell.id}`, recipient ? [actor, recipient] : [actor], {
+            description: outcome, importance: 3
+        });
+        return outcome;
+    }
+
+    const DEATHBERRY_DISCOVERY_COOLDOWN = 30;
+
+    function showDeathberryDiscovery() {
+        const pending = state.pendingDeathberryDiscovery;
+        if (!pending) return false;
+        const healer = getCat(pending.healerId);
+        if (!healer || healer.rank !== "Medicine Cat" || healer.id !== state.playerCatId) {
+            delete state.pendingDeathberryDiscovery;
+            return false;
+        }
+        if (!$("questCard").hidden) return true;
+
+        StoryEvents.showStoryEvent({
+            id: "deathberry_discovery",
+            title: "Red Berries Near Camp",
+            description: `${healer.name} spots a bush flush with red berries near camp and recognizes it at once. This is a deathberry bush, named for the deadliness of its berries. It cannot be used to heal, but it might come in handy one day. Should ${healer.name} collect some for the den or leave them alone?`,
+            decisionMaker: "healer",
+            choices: [
+                { id: "leave", text: "Leave the deathberries alone" },
+                { id: "collect", text: "Collect a deathberry" }
+            ]
+        }, { healer }, choice => {
+            if (state.pendingDeathberryDiscovery !== pending) return;
+            delete state.pendingDeathberryDiscovery;
+            const collected = choice.id === "collect";
+            if (collected) {
+                const herb = ClanHerbs.get("deathberries");
+                state.herbInventory[herb.id] = ClanHerbs.count(state.herbInventory, herb) + 1;
+            }
+            const outcome = collected ? `${healer.name} tucked a deathberry into a hidden alcove of the their den.`
+                : `${healer.name} decided to leave the deathberries alone.`;
+            recordCatEvent("deathberry_discovery", [healer], { description: outcome, importance: 3, logToChronicle: true });
+            saveGame(false);
+            render();
+            showNotice(outcome);
+        });
+        return true;
+    }
+
+    function tryDeathberryDiscovery() {
+        const healer = getCat(state.playerCatId);
+        if (healer?.rank !== "Medicine Cat" || !canPatrol(healer) ||
+            state.day - (state.lastDeathberryDiscoveryDay ?? -DEATHBERRY_DISCOVERY_COOLDOWN) < DEATHBERRY_DISCOVERY_COOLDOWN ||
+            !chance(.04)) return false;
+        state.lastDeathberryDiscoveryDay = state.day;
+        state.pendingDeathberryDiscovery = { healerId: healer.id };
+        StoryEvents.recordEvent({ id: "deathberry_discovery" });
+        return showDeathberryDiscovery();
+    }
+
     function autonomousDay() {
+        if (showDeathberryDiscovery()) return;
         if (showVigil()) return;
         if (state.medicineDream && showMedicineDream()) return;
         // Advance daily clock
         state.day++;
+        if ((state.day - 1) % ClanWeather.DAYS_PER_SEASON === 0) {
+            state.seasonIndex = (state.seasonIndex + 1) % SEASONS.length;
+            logEvent("season", `${seasonName()} arrived.`);
+        }
+        ClanWeather.advance(state, seasonName(), rand, logEvent);
+        scheduleWeatherFlood();
+        scheduleHeatWildfire();
+        ClanQuirks.daily();
         const disasterOutcome = resolveDisaster();
         const medicineDuty = runMedicineCatDay();
         CatConditions.advanceDay(livingCats(), state.day, logEvent, (cat, description) => {
             rememberEvent(cat, "healed_with_a_limp", { importance: 4, description });
-        }, recordDeath);
+        }, recordDeath, ClanWeather.exposureMultiplier(state));
         const footprintsOutcomes = resolvePendingFootprints();
         const cats = livingCats();
         updateCrushEligibility();
@@ -3784,31 +4538,23 @@
             advanceMoon();
         }
 
-        // One season lasts ten game days in this prototype.
-        if ((state.day - 1) % 10 === 0) {
-            state.seasonIndex = (state.seasonIndex + 1) % SEASONS.length;
-            logEvent("season", `${seasonName()} arrived. The forest has changed its colors and scents.`);
+        for (const c of cats) {
+            const recovery = rand(8, 22);
+            const restBonus = state.campRestDay === state.day ? 4 : 0;
+            c.energy = clamp(c.energy + (griefAffectsRecovery(c) ? Math.floor(recovery / 2) : recovery) + restBonus, 0, 100);
+            c.hunger = clamp(c.hunger + rand(10, 18), 0, 100);
         }
 
-        // Clan food consumption.
-        const dailyNeed = Math.max(2, Math.ceil(cats.length * .45));
-        state.prey = Math.max(0, state.prey - dailyNeed);
-
-        if (state.prey < 3) {
-            logEvent("clan", "The prey pile is running low. A successful patrol would help the clan.");
+        const hungry = cats.filter(cat => cat.hunger > 35).sort((a, b) => b.hunger - a.hunger || a.health - b.health);
+        const meals = hungry.slice(0, state.prey);
+        state.prey -= meals.length;
+        for (const cat of meals) cat.hunger = Math.max(0, cat.hunger - rand(20, 40));
+        if (hungry.length > meals.length) {
+            const unfed = hungry.length - meals.length;
+            logEvent("clan", `${unfed} ${unfed === 1 ? "cat went" : "cats went"} without a meal.`);
         }
 
         cats.forEach(c => {
-
-            const recovery = rand(8, 22);
-            c.energy = clamp(c.energy + (griefAffectsRecovery(c) ? Math.floor(recovery / 2) : recovery), 0, 100);
-            c.hunger = clamp(c.hunger + rand(10, 18), 0, 100);
-
-            if (state.prey > 0 && c.hunger > 35) {
-                c.hunger = clamp(c.hunger - rand(20, 40), 0, 100);
-                state.prey = Math.max(0, state.prey - 1);
-            }
-
             if (c.hunger > 75) {
                 c.health = clamp(c.health - rand(2, 7), 0, 100);
             } else if (c.health < 100 && c.hunger < 45) {
@@ -3873,40 +4619,52 @@
             logEvent("clan", "Several cats have begun to worry about the shrinking prey stores.");
         }
 
-        const admirerEvent = window.StoryEvents?.events.find(event => event.id === "known_admirer");
+        const storyCats = livingCats().filter(cat => !cat.quarantined);
+        const ordinaryStorySlot = !giftStoryActive && !dreamActive && window.StoryEvents?.canTriggerEvent();
+        const imminentFlood = state.disaster?.weatherStart === state.weather?.spell?.startsDay &&
+            state.disaster?.day === state.day + 1;
+        const wildfireWarning = $("questCard").hidden && findWildfireWarning(storyCats);
+        const weatherStory = wildfireWarning || ((ordinaryStorySlot || (imminentFlood && $("questCard").hidden)) &&
+            findWeatherStory(storyCats));
+        const discoveryActive = ordinaryStorySlot && !weatherStory && tryDeathberryDiscovery();
+        const canRunStory = !discoveryActive && (ordinaryStorySlot || Boolean(weatherStory));
+        const admirerEvent = canRunStory && ordinaryStorySlot && StoryEvents.events.find(event => event.id === "known_admirer");
         const admirerParticipants = admirerEvent
-            ? StoryEvents.selectParticipants(admirerEvent, livingCats().filter(cat => !cat.quarantined), state.playerCatId)
+            ? StoryEvents.selectParticipants(admirerEvent, storyCats, state.playerCatId)
             : null;
-        const mateConflict = window.StoryEvents?.canTriggerEvent()
-            ? StoryEvents.findMateConflict(livingCats().filter(cat => !cat.quarantined))
-            : null;
-        const priorityStory = mateConflict || (admirerParticipants
-            ? { event: admirerEvent, participants: admirerParticipants }
-            : null);
+        const priorityStory = canRunStory && (
+            weatherStory ||
+            StoryEvents.findMateConflict(storyCats) ||
+            StoryEvents.findRescueThanks(storyCats) ||
+            StoryEvents.findClanReconciliation(storyCats, state.playerCatId) ||
+            (chance(.15) && StoryEvents.findMutualConfession(storyCats, state.playerCatId)) ||
+            (admirerParticipants && { event: admirerEvent, participants: admirerParticipants }) ||
+            ClanQuirks.findStory(storyCats) ||
+            (chance(.20) && StoryEvents.findClanFight(storyCats, state.playerCatId)) ||
+            (chance(.35) && StoryEvents.findClanArgument(storyCats, state.playerCatId))
+        );
 
-        // Mate conflicts and known admirers take priority over random stories.
-        if (
-            !giftStoryActive && !dreamActive && window.StoryEvents &&
-            StoryEvents.canTriggerEvent() &&
-            (priorityStory || StoryEvents.shouldTriggerEvent())
-        ) {
+        if (canRunStory && (priorityStory || StoryEvents.shouldTriggerEvent())) {
             // Only select events whose global cooldown has expired.
             const availableEvents = StoryEvents.events.filter(
                 event => !StoryEvents.isEventOnCooldown(event)
             );
 
-            const storyEvent = priorityStory?.event || StoryEvents.getRandomEvent(
+            let storyEvent = priorityStory?.event || StoryEvents.getRandomEvent(
                 availableEvents.filter(event => event.id !== "known_admirer")
             );
 
             if (storyEvent) {
+                const rescue = storyEvent.id === "broken_ground";
+                const candidates = rescue ? storyCats.filter(canPatrol) : storyCats;
                 const participants = priorityStory?.participants || StoryEvents.selectParticipants(
                     storyEvent,
-                    livingCats().filter(cat => !cat.quarantined),
+                    candidates,
                     state.playerCatId
                 );
 
                 if (participants) {
+                    if (rescue) storyEvent = StoryEvents.buildBrokenGround(storyEvent, participants, candidates);
                     CatConditions.recordContact(Object.values(participants).filter(Boolean), "conversation", state.day);
                     // Record the event and start its global cooldown.
                     StoryEvents.recordEvent(storyEvent);
@@ -3916,10 +4674,9 @@
                         state.playerCatId
                     );
 
-                    logEvent(
-                        "story",
-                        `${storyEvent.title}: ${storyEvent.description}`
-                    );
+                    if (!storyEvent.private) {
+                        logEvent("story", `${storyEvent.title}: ${storyEvent.description}`);
+                    }
 
                     // Player participates in the event.
                     if (playerInvolved) {
@@ -3952,10 +4709,7 @@
 
                                 console.log("4. Outcome:", outcome);
 
-                                logEvent(
-                                    "story",
-                                    `${storyEvent.title} — ${outcome}`
-                                );
+                                if (!storyEvent.private) logEvent("story", `${storyEvent.title} - ${outcome}`);
 
                                 console.log("5. Chronicle log after logging:", state.log[0]);
 
@@ -3987,7 +4741,8 @@
 
                         // NPCs participate in a regular event.
                     } else {
-                        const selectedChoice = pick(storyEvent.choices);
+                        const selectedChoice = storyEvent.choices.find(choice => choice.id === storyEvent.npcChoice) ??
+                            pick(storyEvent.choices);
                         const { choice, participants: choiceParticipants } =
                             StoryEvents.resolveChoiceParticipants(storyEvent, selectedChoice, participants);
 
@@ -4071,6 +4826,7 @@
         }
 
         apprentice.mentorId = mentor.id;
+        Relationships.refreshRivalries(livingCats(), clanHistoryCats());
 
         logEvent(
             "training",
@@ -4092,12 +4848,14 @@
         const c = getCat(id);
         if (!c) return;
 
+        const player = playerCat();
+        const canAppointDeputy = deputyCandidates(player).includes(c);
         const options = RANKS.filter(r =>
-            (r !== "Deputy" || c.rank === "Deputy") &&
+            (r !== "Deputy" || c.rank === "Deputy" || canAppointDeputy) &&
             !(c.age < 6 && r !== "Kit") &&
             !(c.age >= 6 && c.age < 12 && !["Apprentice", "Kit"].includes(r))
         );
-        if (canChooseMedicineApprentice(playerCat()) && medicineApprenticeCandidates(true).includes(c)) {
+        if (canChooseMedicineApprentice(player) && medicineApprenticeCandidates(true).includes(c)) {
             options.push(MEDICINE_APPRENTICE_RANK);
         }
 
@@ -4121,12 +4879,21 @@
             handleMedicineAction("apprentice", c.id);
             return;
         }
+        if (normalized === "Deputy" && c.rank !== "Deputy") {
+            const message = appointDeputy(player, c);
+            if (!message) return;
+            saveGame(false);
+            render();
+            showNotice(message);
+            return;
+        }
         if (c.rank === "Medicine Cat" && normalized !== c.rank) delete c.reservedMedicineKitId;
         if (c.medicineTrack && (c.rank === "Apprentice" || normalized === "Apprentice")) {
             delete c.medicineTrack;
             delete c.mentorId;
         }
         c.rank = normalized;
+        Relationships.refreshRivalries(livingCats(), clanHistoryCats());
         logEvent("rank", `${c.name} is now recognized as ${normalized.toLowerCase()}.`);
         resolveLeadershipVacancy();
         saveGame(false);
@@ -4183,7 +4950,8 @@
             loaded.predatorRisk ??= null;
             loaded.pendingFootprints ??= [];
             loaded.pendingVigils ??= [];
-            loaded.herbs ??= 3;
+            loaded.herbInventory = ClanHerbs.normalize(loaded.herbs ?? 3, loaded.herbInventory);
+            delete loaded.herbs;
             loaded.medicineDream ??= null;
             loaded.disaster ??= null;
             loaded.nextDreamDay ??= loaded.day + 1;
@@ -4233,14 +5001,6 @@
                     cat.relationships.crushes = [];
                 }
 
-                if (!Array.isArray(cat.relationships.rivals)) {
-                    cat.relationships.rivals = [];
-                }
-
-                if (!Array.isArray(cat.relationships.crushRivals)) {
-                    cat.relationships.crushRivals = [];
-                }
-
                 if (!Array.isArray(cat.relationships.knownCrushes)) {
                     cat.relationships.knownCrushes = [];
                 }
@@ -4259,6 +5019,7 @@
             });
 
             state = loaded;
+            Relationships.migrateLegacyRivalries(historyCats, state.day);
             const cats = livingCats();
             applyMedicineApprenticeLimit(cats);
             const livingIds = new Set(cats.map(cat => cat.id));
@@ -4291,10 +5052,6 @@
                 }
             }
             updateCrushEligibility();
-            cats.forEach((cat, index) => {
-                cat.relationships.rivals = [];
-                for (const other of cats.slice(0, index)) updateRivalry(cat, other);
-            });
             return true;
         } catch (err) {
             return false;
@@ -4366,6 +5123,8 @@
         });
 
         $("advanceDayBtn").addEventListener("click", autonomousDay);
+        $("foodForecast").addEventListener("click", () => switchView("territory"));
+        $("campRestBtn").addEventListener("click", toggleCampRest);
         $("vigilBtn").addEventListener("click", showVigil);
         $("appointDeputyBtn").addEventListener("click", () => {
             const message = appointDeputy(playerCat(), getCat($("deputyCandidate").value));
@@ -4400,13 +5159,14 @@
         });
 
         document.body.addEventListener("click", e => {
-            if (e.target.closest("#shortHuntBtn")) {
-                runShortHunt();
+            const shortHuntButton = e.target.closest("[data-short-hunt]");
+            if (shortHuntButton) {
+                runShortHunt(shortHuntButton.dataset.shortHunt);
                 return;
             }
             const medicineAction = e.target.closest("[data-medicine-action]");
             if (medicineAction) {
-                handleMedicineAction(medicineAction.dataset.medicineAction, medicineAction.dataset.patient);
+                handleMedicineAction(medicineAction.dataset.medicineAction, medicineAction.dataset.patient, medicineAction.dataset.condition);
                 return;
             }
             const profileButton = e.target.closest(
@@ -4499,6 +5259,7 @@
 
     initializeNpcAI();
     initializeStoryEvents();
+    ClanQuirks.initialize({ getState: () => state, expectedMeals, rand, chance, relationship, rememberEvent, logEvent, startGiftStory });
     initializeSocialReactions();
     initializeGossip();
     CatRenderer.initialize(COLORS);
@@ -4506,8 +5267,10 @@
 
     bindEvents();
     render();
-    if (state.medicineDream) showMedicineDream();
-    if (state.giftStory?.stage === "reveal" && state.giftStory.nextDay <= state.day) {
-        advanceGiftStory();
+    if (!showDeathberryDiscovery()) {
+        if (state.medicineDream) showMedicineDream();
+        if (state.giftStory?.stage === "reveal" && state.giftStory.nextDay <= state.day) {
+            advanceGiftStory();
+        }
     }
 })();

@@ -2,11 +2,9 @@
 
 window.Relationships = (() => {
     let clamp;
-    let recordCatEvent;
 
     function initialize(dependencies) {
         clamp = dependencies.clamp;
-        recordCatEvent = dependencies.recordCatEvent;
     }
 
     // Get the relationship score between two cats.
@@ -76,7 +74,7 @@ window.Relationships = (() => {
         if (value >= 25) return "friendly";
         if (value > -20) return "neutral";
         if (value > -60) return "strained";
-        return "rivals";
+        return "very strained";
     }
 
     function routineBondGain(bond, gain) {
@@ -91,10 +89,16 @@ window.Relationships = (() => {
             relationship(b, a) >= 85;
     }
 
-    // Check whether two cats are mutual rivals.
-    function areRivals(a, b) {
-        return relationship(a, b) <= -60 &&
-            relationship(b, a) <= -60;
+    function conflictWith(cat, other) {
+        return cat?.relationships?.conflicts?.[other?.id];
+    }
+
+    function rivalriesWith(cat, other) {
+        return Object.values(conflictWith(cat, other)?.rivalries ?? {});
+    }
+
+    function enmityWith(cat, other) {
+        return conflictWith(cat, other)?.enmity;
     }
 
     // Update best-friend lists when relationships change.
@@ -133,110 +137,139 @@ window.Relationships = (() => {
         }
     }
 
-    // Update rivalry lists without removing rivalries
-    // previously discovered through shared crushes.
-    function updateRivalry(a, b) {
-        if (!a || !b) {
-            return;
+    function ensureConflict(cat, other) {
+        return (cat.relationships.conflicts ??= {})[other.id] ??= { rivalries: {} };
+    }
+
+    function removeEmptyConflict(cat, other) {
+        const entry = conflictWith(cat, other);
+        if (entry && !entry.enmity && !Object.keys(entry.rivalries).length) {
+            delete cat.relationships.conflicts[other.id];
         }
+    }
 
-        if (!a.relationships) a.relationships = {};
-        if (!b.relationships) b.relationships = {};
+    function clearRivalries(cat, other) {
+        const entry = conflictWith(cat, other);
+        if (!entry) return;
+        entry.rivalries = {};
+        removeEmptyConflict(cat, other);
+    }
 
-        if (!Array.isArray(a.relationships.rivals)) {
-            a.relationships.rivals = [];
-        }
+    function clearEnmity(cat, other) {
+        const entry = conflictWith(cat, other);
+        if (!entry) return;
+        delete entry.enmity;
+        removeEmptyConflict(cat, other);
+    }
 
-        if (!Array.isArray(b.relationships.rivals)) {
-            b.relationships.rivals = [];
-        }
+    function startRivalry(cat, other, kind, goalId, day) {
+        if (!cat?.alive || !other?.alive || cat.id === other.id) return false;
+        const key = `${kind}:${goalId}`;
+        const rivalries = ensureConflict(cat, other).rivalries;
+        if (rivalries[key]) return false;
+        rivalries[key] = { kind, goalId, intensity: 1, lastEventDay: day };
+        return true;
+    }
 
-        const rivals = areRivals(a, b);
+    function adjustRivalry(cat, other, rivalry, amount, day) {
+        const rivalries = conflictWith(cat, other)?.rivalries;
+        const key = `${rivalry.kind}:${rivalry.goalId}`;
+        if (rivalries?.[key] !== rivalry) return false;
+        rivalry.intensity = clamp(rivalry.intensity + amount, 0, 3);
+        rivalry.lastEventDay = day;
+        if (rivalry.intensity > 0) return false;
+        delete rivalries[key];
+        removeEmptyConflict(cat, other);
+        return true;
+    }
 
-        if (rivals) {
-            if (!a.relationships.rivals.includes(b.id)) {
-                a.relationships.rivals.push(b.id);
-            }
+    function recordGrievance(cat, other, cause, incidentId, day, { strength = 1, privateOwnerId = null } = {}) {
+        if (!cat?.alive || !other?.alive || cat.id === other.id) return false;
+        const entry = ensureConflict(cat, other);
+        if (entry.enmity?.grievances.some(grievance => grievance.incidentId === incidentId)) return false;
+        const enmity = entry.enmity ??= { distrust: 0, grievances: [] };
+        enmity.distrust = clamp(enmity.distrust + strength, 1, 3);
+        enmity.grievances.push({ cause, incidentId, day, strength, privateOwnerId });
+        return true;
+    }
 
-            if (!b.relationships.rivals.includes(a.id)) {
-                b.relationships.rivals.push(a.id);
-            }
+    function resolveGrievance(cat, other, incidentId) {
+        const enmity = enmityWith(cat, other);
+        const grievance = enmity?.grievances.find(entry => entry.incidentId === incidentId);
+        if (!grievance) return false;
+        enmity.grievances = enmity.grievances.filter(entry => entry !== grievance);
+        if (enmity.grievances.length) {
+            enmity.distrust = Math.max(1, enmity.distrust - grievance.strength);
         } else {
-            a.relationships.rivals =
-                a.relationships.rivals.filter(id => id !== b.id);
+            delete conflictWith(cat, other).enmity;
+            removeEmptyConflict(cat, other);
+        }
+        return true;
+    }
 
-            b.relationships.rivals =
-                b.relationships.rivals.filter(id => id !== a.id);
+    function easeDistrust(cat, other) {
+        const enmity = enmityWith(cat, other);
+        if (!enmity || --enmity.distrust > 0) return false;
+        delete conflictWith(cat, other).enmity;
+        removeEmptyConflict(cat, other);
+        return true;
+    }
+
+    function rivalryGoalIsActive(cat, other, rivalry, livingById) {
+        const goal = livingById.get(rivalry.goalId);
+        if (rivalry.kind === "shared_crush") {
+            return goal && cat.relationships.crushes?.includes(goal.id) && other.relationships.crushes?.includes(goal.id);
+        }
+        return goal && cat.rank === "Apprentice" && other.rank === "Apprentice" &&
+            cat.mentorId === goal.id && other.mentorId === goal.id;
+    }
+
+    function refreshRivalries(cats, historyCats = cats) {
+        const livingById = new Map(cats.map(cat => [cat.id, cat]));
+        const historyById = new Map(historyCats.map(cat => [cat.id, cat]));
+        for (const cat of cats) {
+            for (const [otherId, entry] of Object.entries(cat.relationships.conflicts ?? {})) {
+                const other = historyById.get(otherId);
+                if (!other) {
+                    delete cat.relationships.conflicts[otherId];
+                    continue;
+                }
+                // Keep a deceased clanmate's relationship as it was at their death.
+                if (!other.alive) continue;
+                for (const [key, rivalry] of Object.entries(entry.rivalries)) {
+                    if (!rivalryGoalIsActive(cat, other, rivalry, livingById)) delete entry.rivalries[key];
+                }
+                removeEmptyConflict(cat, other);
+            }
         }
     }
 
-    // Cats with the same love interest can develop a rivalry
-    function createCrushRivalry(a, b, sharedCrush) {
-        if (!a || !b || !sharedCrush || a.id === b.id) {
-            return false;
+    function migrateLegacyRivalries(cats, day) {
+        const catsById = new Map(cats.map(cat => [cat.id, cat]));
+        for (const cat of cats) {
+            const rels = cat.relationships;
+            const targetsByRival = rels.crushRivalTargets ?? {};
+            const legacyRivals = Array.isArray(rels.crushRivals) ? rels.crushRivals : [];
+            const rivalIds = new Set([...legacyRivals, ...Object.keys(targetsByRival)]);
+            for (const rivalId of rivalIds) {
+                const rival = catsById.get(rivalId);
+                if (!rival || rival === cat) continue;
+                for (const targetId of targetsByRival[rivalId] ?? rels.crushes ?? []) {
+                    if (!rels.crushes?.includes(targetId) || !rival.relationships.crushes?.includes(targetId)) continue;
+                    const rivalries = ensureConflict(cat, rival).rivalries;
+                    rivalries[`shared_crush:${targetId}`] ??= {
+                        kind: "shared_crush", goalId: targetId, intensity: 1, lastEventDay: day
+                    };
+                }
+            }
+            delete rels.rivals;
+            delete rels.crushRivals;
+            delete rels.crushRivalTargets;
         }
-
-        if (!a.relationships.crushes.includes(sharedCrush.id) ||
-            !b.relationships.crushes.includes(sharedCrush.id)) {
-            return false;
-        }
-
-        if (!Array.isArray(a.relationships.crushRivals)) {
-            a.relationships.crushRivals = [];
-        }
-
-        if (!Array.isArray(b.relationships.crushRivals)) {
-            b.relationships.crushRivals = [];
-        }
-
-        // Check whether this pair's crush rivalry was already recorded.
-        const aTargets = a.relationships.crushRivalTargets ??= {};
-        const bTargets = b.relationships.crushRivalTargets ??= {};
-        const aShared = aTargets[b.id] ??= [];
-        const bShared = bTargets[a.id] ??= [];
-        const alreadyRecorded = aShared.includes(sharedCrush.id) && bShared.includes(sharedCrush.id);
-        if (!aShared.includes(sharedCrush.id)) aShared.push(sharedCrush.id);
-        if (!bShared.includes(sharedCrush.id)) bShared.push(sharedCrush.id);
-
-        // Remember that these cats have already discovered this shared crush.
-        if (!Array.isArray(a.relationships.knownCrushes)) {
-            a.relationships.knownCrushes = [];
-        }
-
-        if (!Array.isArray(b.relationships.knownCrushes)) {
-            b.relationships.knownCrushes = [];
-        }
-
-        if (!a.relationships.knownCrushes.includes(sharedCrush.id)) {
-            a.relationships.knownCrushes.push(sharedCrush.id);
-        }
-
-        if (!b.relationships.knownCrushes.includes(sharedCrush.id)) {
-            b.relationships.knownCrushes.push(sharedCrush.id);
-        }
-
-        // Remember the reason for the rivalry.
-        if (!a.relationships.crushRivals.includes(b.id)) {
-            a.relationships.crushRivals.push(b.id);
-        }
-
-        if (!b.relationships.crushRivals.includes(a.id)) {
-            b.relationships.crushRivals.push(a.id);
-        }
-
-        // Only record the event the first time.
-        if (!alreadyRecorded) {
-            recordCatEvent("became_rivals", [a, b], {
-                importance: 4,
-                description: `${a.name} and ${b.name} became rivals over their shared feelings for ${sharedCrush.name}.`
-            });
-        }
-
-        return !alreadyRecorded;
     }
 
-    // Set a mutual relationship score and refresh derived lists.
-    function setRelationship(a, b, value) {
+    // Set both relationship scores and refresh derived lists.
+    function setRelationship(a, b, value, reciprocalValue = value) {
         if (!a || !b) {
             return;
         }
@@ -250,10 +283,19 @@ window.Relationships = (() => {
         }
 
         a.relationships[b.id] = clamp(value, -100, 100);
-        b.relationships[a.id] = clamp(value, -100, 100);
+        b.relationships[a.id] = clamp(reciprocalValue, -100, 100);
 
         updateBestFriendship(a, b);
-        updateRivalry(a, b);
+    }
+
+    function strengthenPatrolBonds(patrol) {
+        const survivors = [...new Set(patrol)].filter(cat => cat.alive);
+        for (const [index, first] of survivors.entries()) {
+            for (const second of survivors.slice(index + 1)) {
+                if (enmityWith(first, second) || enmityWith(second, first)) continue;
+                setRelationship(first, second, relationship(first, second) + 1, relationship(second, first) + 1);
+            }
+        }
     }
 
     return {
@@ -261,11 +303,20 @@ window.Relationships = (() => {
         relationship,
         relationshipLabel,
         routineBondGain,
+        strengthenPatrolBonds,
         areBestFriends,
-        areRivals,
         updateBestFriendship,
-        updateRivalry,
-        createCrushRivalry,
+        rivalriesWith,
+        enmityWith,
+        clearRivalries,
+        clearEnmity,
+        startRivalry,
+        adjustRivalry,
+        recordGrievance,
+        resolveGrievance,
+        easeDistrust,
+        refreshRivalries,
+        migrateLegacyRivalries,
         jealousyAdmiration,
         setJealousyAdmiration,
         adjustJealousyAdmiration,
