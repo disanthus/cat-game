@@ -4478,7 +4478,7 @@
                 const herb = ClanHerbs.get("deathberries");
                 state.herbInventory[herb.id] = ClanHerbs.count(state.herbInventory, herb) + 1;
             }
-            const outcome = collected ? `${healer.name} tucked a deathberry into a hidden alcove of the their den.`
+            const outcome = collected ? `${healer.name} tucked a deathberry into a hidden cache within their den.`
                 : `${healer.name} decided to leave the deathberries alone.`;
             recordCatEvent("deathberry_discovery", [healer], { description: outcome, importance: 3, logToChronicle: true });
             saveGame(false);
