@@ -7,6 +7,10 @@ window.Gossip = (() => {
         crush: {
             description: "A cat has feelings for another cat.",
             importance: 2
+        },
+        deathberry_report: {
+            description: "A cat heard an account of a sudden death in the medicine cat's den.",
+            importance: 4
         }
     };
 
@@ -51,19 +55,29 @@ window.Gossip = (() => {
     }
 
     // Creates a standardized gossip record.
-    function createGossip(type, subjectId, targetId = null) {
+    function createGossip(type, subjectId, targetId = null, report = {}) {
         const definition = getGossipType(type);
 
         if (!definition) {
             return null;
         }
 
+        if (type === "deathberry_report" && (!report.incidentId || !report.sourceId)) return null;
+
         return {
             type,
             subjectId,
             targetId,
             importance: definition.importance,
-            description: definition.description
+            description: definition.description,
+            ...(type === "deathberry_report" && {
+                incidentId: report.incidentId,
+                sourceId: report.sourceId
+            }),
+            ...(type === "crush" && Number.isFinite(report.heardDay) && {
+                heardDay: report.heardDay,
+                heardWithId: report.heardWithId
+            })
         };
     }
 
@@ -77,7 +91,9 @@ window.Gossip = (() => {
         return known.some(item =>
             item.type === gossip.type &&
             item.subjectId === gossip.subjectId &&
-            item.targetId === gossip.targetId
+            item.targetId === gossip.targetId &&
+            (gossip.type !== "deathberry_report" ||
+                (item.incidentId === gossip.incidentId && item.sourceId === gossip.sourceId))
         );
     }
 
@@ -120,7 +136,8 @@ window.Gossip = (() => {
         const record = createGossip(
             gossip.type,
             gossip.subjectId,
-            gossip.targetId
+            gossip.targetId,
+            gossip
         );
 
         if (!record) {

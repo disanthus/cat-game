@@ -17,7 +17,7 @@ window.ClanPatrols = (() => {
         return { lead, name, score: clamp(score, 0, 10) };
     }
 
-    function selectTeam(location, candidates, player, goalOverride) {
+    function selectTeam(location, candidates, player, goalOverride, companionPreference) {
         const route = ROUTES[location.id];
         const goal = goalOverride ?? route.goal;
         const team = new Set([
@@ -26,9 +26,11 @@ window.ClanPatrols = (() => {
             role(candidates, route.safety)?.lead
         ].filter(Boolean));
         const supportSkill = route.yieldSkill ?? "stamina";
+        const leaders = [...team];
+        const score = cat => skill(cat, goal) + skill(cat, route.safety) + skill(cat, supportSkill) +
+            (companionPreference?.(cat, leaders) ?? 0);
         const remaining = candidates.filter(cat => !team.has(cat)).sort((a, b) =>
-            (skill(b, goal) + skill(b, route.safety) + skill(b, supportSkill)) -
-            (skill(a, goal) + skill(a, route.safety) + skill(a, supportSkill)) || b.energy - a.energy);
+            score(b) - score(a) || b.energy - a.energy);
         return [...team, ...remaining.slice(0, 3 - team.size)];
     }
 

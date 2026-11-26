@@ -584,6 +584,35 @@ window.StoryEvents = (() => {
         pairCooldown: 18
     };
     const FIGHT_INSTIGATORS = new Set(["bold", "curious", "proud", "stubborn", "ambitious"]);
+    const FIGHT_GRIEVANCES = {
+        hurtful_rumor: "the rumor that {other} had mocked them",
+        false_rumor: "a false rumor they blamed on {other}",
+        unfair_accusation: "{other}'s accusation that they had spoiled a hunt",
+        fresh_kill_dispute: "{other} calling them out over how fresh-kill was shared",
+        unfair_medicine_den_accusation: "{other}'s public accusation about a death in the medicine den",
+        betrayal_of_care: "what they'd learned about {other}'s treatment of a patient",
+        public_insult: "{other} insulting them in front of their clanmates"
+    };
+
+    function fightOpening(instigator, other, playerCatId) {
+        const grievance = window.Relationships.enmityWith(instigator, other)?.grievances?.reduce((chosen, entry) =>
+            !chosen || entry.strength > chosen.strength || (entry.strength === chosen.strength && entry.day >= chosen.day)
+                ? entry : chosen, null);
+        const reason = grievance && FIGHT_GRIEVANCES[grievance.cause]?.replaceAll("{other}", other.name);
+        const reasonText = reason ? `${instigator.name} was still angry about ${reason}.` : "";
+        const privateReason = reasonText && grievance.privateOwnerId
+            ? { ownerId: grievance.privateOwnerId, text: reasonText } : null;
+        const context = privateReason || (grievance && !reasonText)
+            ? `${instigator.name} was still holding a grudge against ${other.name}.`
+            : reasonText || `${instigator.name}'s hostility toward ${other.name} boiled over.`;
+        const action = `${instigator.name} sprang at ${other.name} by the fresh-kill pile.`;
+        const publicOpening = `${context} ${action}`;
+        return {
+            publicOpening,
+            privateReason,
+            sceneOpening: privateReason?.ownerId === playerCatId ? `${reasonText} ${action}` : publicOpening
+        };
+    }
 
     function findClanFight(cats, playerCatId) {
         if (isEventOnCooldown(CLAN_FIGHT)) return null;
@@ -598,6 +627,7 @@ window.StoryEvents = (() => {
 
             const [instigator, other] = firstCanInstigate && (!secondCanInstigate || Math.random() < .5)
                 ? [first, second] : [second, first];
+            const { publicOpening, privateReason, sceneOpening } = fightOpening(instigator, other, playerCatId);
             return {
                 participants: { instigator, other },
                 event: {
@@ -605,8 +635,8 @@ window.StoryEvents = (() => {
                     dialogue: {
                         start: {
                             speaker: "instigator",
-                            text: "{instigator} springs at {other} by the fresh-kill pile. The two cats tumble into the dust as the rest of camp scatters.",
-                            effects: [{ type: "clan_fight" }]
+                            text: `${sceneOpening} The two cats wrestled in the dirt as the rest of camp scattered.`,
+                            effects: [{ type: "clan_fight", publicOpening, privateReason }]
                         }
                     }
                 }
@@ -1013,7 +1043,7 @@ window.StoryEvents = (() => {
         const cat = participants[node.decisionMaker];
         const mate = cat === challenger ? partner : challenger;
         const concern = game.mateConcern(cat, mate);
-        const trust = concern.trust ?? cat.trust ?? 50;
+        const trust = window.Relationships.trustToward(cat, mate);
         const suspicion = concern.suspicion;
         const bond = game.relationship(cat, mate);
         const loyalty = { loyal: 22, patient: 15, gentle: 12, helpful: 10, wary: -12, proud: -10, ambitious: -7 };
@@ -1575,13 +1605,13 @@ window.StoryEvents = (() => {
             leave: '"Find me when you’re done." {clanmate} brushes against {player} on the way past.'
         },
         family: {
-            greetings: ["Come sit with me, {player}. We barely caught up today.", "It feels like ages since we had a quiet moment together."],
+            greetings: ["Come sit with me, {player}! I haven't seen you since sunup.", "It feels like ages since we had a quiet moment together."],
             stay: "{player} and {clanmate} catch up and trade memories from the past.",
             leave: '"I’ll look for you later." {clanmate} watches {player} go.'
         },
         friends: {
             greetings: ["I was hoping you'd come by, {player}.", "You always find me in this spot. Here, come sit!"],
-            stay: "{player} and {clanmate} swap stories until one of them loses track of time.",
+            stay: "{player} and {clanmate} swap stories until they both lose track of time.",
             leave: '"I’ll save the good part of that story, then." {clanmate} settles back down.'
         },
         crush: {
@@ -1601,18 +1631,18 @@ window.StoryEvents = (() => {
         }
     };
     const CLANMATE_PERSONALITY_LINES = {
-        bold: ["I've been wondering what's past the ridge. One day I'm going to find out.", "If there's something on your mind, say it plainly."],
-        gentle: ["Tell me how you're holding up. I've got time.", "We can sit quietly if that's easier."],
-        curious: ["I found the oddest set of tracks today. Want to help me figure them out?", "I've got a question about the last patrol. Would you hear me out?"],
-        patient: ["We've got until the shadows reach the den. Take your time.", "There's time before the next patrol. We can take this slowly."],
-        helpful: ["I was sorting the bedding. Want some fresh moss for your nest?", "I can make room for you on this side of the den."],
-        wary: ["Let's sit where we can see who comes through the entrance.", "I'd rather talk here, where we can see who's coming."],
+        bold: ["I've been wondering what's on the other side of the mountain. One day I'm going to find out.", "If there's something on your mind, just say it!"],
+        gentle: ["Tell me how you're holding up. I've got time.", "We can sit somewhere quieter if that's better for you."],
+        curious: ["I found the oddest set of tracks today. Want to help me figure them out?", "I've got a question about the last patrol we went on together. Would you hear me out?"],
+        patient: ["We've got until the stars come out. Take your time.", "Wait -- there's still time before the next patrol, what did you want to talk about?"],
+        helpful: ["Oh! I was just sorting out the new bedding. Want some fresh moss for your nest?", "I can make room for you on this side of the den if you'd like."],
+        wary: ["Let's talk somewhere more private.", "I'd rather talk here, where we can see who's coming."],
         playful: ["Settle something for me. How many mice could you carry at once?", "I promise to keep my terrible mouse impression to myself."],
-        proud: ["You should have seen the trail I picked up this morning.", "I know my work speaks for itself. What did you want to talk about?"],
+        proud: ["You should have seen the hunting trail I picked up this morning.", "I know my work speaks for itself. So what did you want to talk about?"],
         observant: ["There were two thrushes by the brambles this morning. They went quiet before the patrol got back.", "The camp's nearly empty at this hour. We won't be interrupted."],
-        stubborn: ["I still say the west trail is quicker. You've got time to hear my case.", "You have your view and I have mine. I can live with that for a while."],
-        loyal: ["Tell me how your patrol went. I wanted to hear it from you.", "We're clanmates. I'll hear what you have to say."],
-        ambitious: ["I've been working on my tracking. What are you practicing these days?", "I have training soon. I've got a little time before I go."]
+        stubborn: ["I still say the west trail is quicker. You got time to hear my case?", "You have your views and I have mine. I can live with that for a while."],
+        loyal: ["Tell me how your patrol went. Some other cats were talking about it, but I wanted to hear it from you.", "I'll hear out whatever you have to say."],
+        ambitious: ["I've been working on my tracking lately. What are you practicing these days?", "I have to get back to my duties soon but I guess I have a few moments to spare."]
     };
 
     function clanmateConversationTone(clanmate, player) {

@@ -158,9 +158,9 @@ window.NPC = (() => {
                 game.relationship(cat, other) >= 60
             );
 
-            const other = friends.length > 0 && game.chance(0.70)
+            const other = ClanSocial.routineCompany(cat, company) ?? (friends.length > 0 && game.chance(0.70)
                 ? game.pick(friends)
-                : game.pick(company);
+                : game.pick(company));
 
             const bond = game.relationship(cat, other);
             let change = game.rand(1, 4);
@@ -234,11 +234,13 @@ window.NPC = (() => {
             //     });
             // }
 
+            let relationshipMoment = "";
             if (change > 0) {
                 game.refreshMutualCrush(cat, other);
                 result = [game.tryDevelopCrush(cat, other), game.tryDevelopCrush(other, cat)]
                     .filter(Boolean)
                     .join(" ");
+                relationshipMoment = ClanSocial.romanceMoment(cat, other);
                 if (result) game.showNotice(result);
             }
 
@@ -251,7 +253,8 @@ window.NPC = (() => {
                 if (gossip) {
                     result = gossip;
                 } else if (change > 0) {
-                    result = `${cat.name} spent time with ${other.name}.`;
+                    result = relationshipMoment || ClanSocial.rememberRoutine(cat, other) ||
+                        `${cat.name} spent time with ${other.name}.`;
                     if (bondChange > 0) result += " Their bond grew closer.";
                 } else {
                     result = `${cat.name} and ${other.name} had a small disagreement.`;

@@ -966,6 +966,40 @@ input {
   margin-bottom: 10px;
 }
 
+.location-details {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.location-details strong {
+  color: var(--ink);
+}
+
+.location-hazard,
+.location-modifiers {
+  display: grid;
+}
+
+.location-hazard {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #f7e9db;
+  color: #713f2a;
+}
+
+.location-hazard strong {
+  color: inherit;
+}
+
+.location-modifiers > span {
+  padding-inline-start: 8px;
+}
+
 .location-difficulty {
   font:
     0.68rem "DM Mono",

@@ -16,7 +16,7 @@ window.ClanQuirks = (() => {
         secret_caretaker: {
             title: "Secret caretaker", personalities: ["helpful", "gentle", "proud"],
             clue: "{subject}'s bedding was changed before anyone was assigned to the elders' den.",
-            proof: "{owner} carries fresh moss into {subject}'s nest while the camp is quiet.",
+            proof: "{owner} replaces {subject}'s nest with fresh moss while the camp is still quiet with sleep.",
             support: "Offer to help with the bedding",
             motives: ["quiet_kindness", "repay_care", "protect_reputation"]
         },
@@ -36,7 +36,7 @@ window.ClanQuirks = (() => {
         },
         takes_blame: {
             title: "Takes the blame", personalities: ["loyal", "helpful", "ambitious"],
-            clue: "{owner} says they misplaced a bundle of herbs, but another cat remembers seeing them elsewhere.",
+            clue: "{owner} says they were the one who misplaced the bundle of herbs that were meant to be delivered to the medicine cat's den, but someone else recalls they out of camp on a patrol at the time it went missing.",
             proof: "{subject} thanks {owner} for taking responsibility for the missing bundle.",
             support: "Encourage them to speak honestly with the cat they protected",
             motives: ["protect_friend", "protect_apprentice", "earn_favor"]
@@ -57,20 +57,20 @@ window.ClanQuirks = (() => {
     };
 
     const motives = {
-        famine_fear: { label: "Fear of another famine", line: "I've seen the prey pile empty before. I can't bear to have nothing put aside.", personalities: ["wary"], trust: "low", context: "scarce" },
-        feed_overlooked: { label: "Feeds overlooked clanmates", line: "I know which cats keep missing meals. I want to have something left for them.", personalities: ["observant", "helpful"], context: "scarce" },
-        self_reliance: { label: "Wants an independent reserve", line: "I trust a reserve I can look after myself.", personalities: ["stubborn"], trust: "low", respect: "low" },
-        quiet_kindness: { label: "Helps without taking credit", line: "Someone needed to make that nest comfortable. That's all.", personalities: ["gentle", "helpful"] },
+        famine_fear: { label: "Fear of another famine", line: "I've seen the prey pile empty before. I won't go through that again.", personalities: ["wary"], trust: "low", context: "scarce" },
+        feed_overlooked: { label: "Feeds overlooked clanmates", line: "I know which cats tend to skip meals when prey isn't running. I want to make sure I always have something left for them.", personalities: ["observant", "helpful"], context: "scarce" },
+        self_reliance: { label: "Wants an independent reserve", line: "I trust a prey pile I can look after myself.", personalities: ["stubborn"], trust: "low", respect: "low" },
+        quiet_kindness: { label: "Helps without taking credit", line: "The camp barrier needed fixing so I fixed it. That's all there is to it.", personalities: ["gentle", "helpful"] },
         repay_care: { label: "Repays an old kindness", line: "They looked after me once. I wanted to do the same.", personalities: ["loyal"], context: "close" },
         protect_reputation: { label: "Keeps their soft side private", line: "Other cats would make a fuss if they knew. I would rather keep this between us.", personalities: ["proud"], respect: "high", trust: "low" },
         read_weather: { label: "Wants to understand the river", line: "The water leaves marks on the stones. If I watch long enough, maybe I can learn to read them!", personalities: ["curious", "observant"], context: "storm" },
-        seek_danger: { label: "Wants to prove their nerve", line: "Everyone says to stay away. I want to see how close I can get and still come back.", personalities: ["bold", "ambitious"], respect: "low" },
-        watch_for_signs: { label: "Watches for omens", line: "I think StarClan has something to show us in the way the river moves.", faith: "high", context: "storm" },
+        seek_danger: { label: "Wants to prove their nerve", line: "Everyone always tells me to stay away away from danger. I just want to see how close I can get and still come back.", personalities: ["bold", "ambitious"], respect: "low" },
+        watch_for_signs: { label: "Watches for omens", line: "I think StarClan has something to show us in the way the river moves. It's always different before a storm.", faith: "high", context: "storm" },
         keep_safe: { label: "Fears for their patrolmates", line: "I feel better when everyone leaves camp after I've done it.", personalities: ["wary", "gentle"], context: "danger" },
         honor_mentor: { label: "Keeps an old mentor's habit", line: "My mentor taught me that. I like carrying something of theirs with me.", personalities: ["stubborn", "patient"], faith: "low" },
         listen_to_starclan: { label: "Asks StarClan for safe passage", line: "I ask our ancestors to watch the patrol before we leave.", faith: "high" },
-        protect_friend: { label: "Protects a close friend", line: "I didn't want them to face the clan's anger alone.", personalities: ["loyal"], context: "close" },
-        protect_apprentice: { label: "Shields a younger cat", line: "They were frightened of getting into trouble. I thought taking the blame would help.", personalities: ["helpful", "gentle"], context: "apprentice" },
+        protect_friend: { label: "Protects a close friend", line: "I didn't want them to face the Clan's anger alone.", personalities: ["loyal"], context: "close" },
+        protect_apprentice: { label: "Shields a younger cat", line: "They were frightened of getting in trouble. I thought taking the blame would spare them.", personalities: ["helpful", "gentle"], context: "apprentice" },
         earn_favor: { label: "Wants a favor owed", line: "If I stand up for them now, they might stand up for me later.", personalities: ["ambitious"], respect: "low", context: "rank" },
         private_grief: { label: "Grieves away from the clan", line: "I miss them. It's easier to say that here, where nobody expects me to explain.", personalities: ["proud", "wary"], trust: "low" },
         keep_memory: { label: "Keeps a loved one's memory alive", line: "Saying their name here helps me remember how they sounded.", personalities: ["gentle", "loyal"], context: "loss" },
@@ -219,7 +219,7 @@ window.ClanQuirks = (() => {
             actions = [["notice", "Keep it in mind"]];
         } else if (!knowledge.discovered) {
             title = "A Second Look";
-            description = fill(def.clue, owner, subject) + " You remember seeing something like this before.";
+            description = fill(def.clue, owner, subject) + " You think you've seen them do this before.";
             actions = [["ask", `Ask ${owner.name} in private`], ["watch", "Wait and look for proof"]];
         } else {
             title = def.title;
@@ -246,7 +246,7 @@ window.ClanQuirks = (() => {
             game.relationship(observer, owner) + 3);
         switch (owner.hiddenQuirk) {
             case "prey_cacher":
-                return `${owner.name} brought ${releaseCache(owner, state)} prey to the clan and agreed to share their reserve in a shortage.`;
+                return `${owner.name} brought ${releaseCache(owner, state)} prey to the Clan and agreed to share their reserve in a shortage.`;
             case "secret_caretaker":
                 subject.energy = Math.min(100, subject.energy + 8);
                 return `${observer.name} helped ${owner.name} settle ${subject.name} into fresh bedding.`;
@@ -260,7 +260,7 @@ window.ClanQuirks = (() => {
                 return `${observer.name} encouraged ${owner.name} to speak to ${subject.name} about owning up next time. ${owner.name} agreed to try.`;
             case "keeps_a_place":
                 game.rememberEvent(observer, "quirk_remembrance", {
-                    description: `${owner.name} remembered how ${subject.name} always made room in their nest for a cold apprentice.`,
+                    description: `${owner.name} remembered how ${subject.name} always saved an extra piece of prey for those in need.`,
                     importance: 4, participants: [owner.id, subject.id], privateOwnerId: observer.id, departedId: subject.id
                 });
                 return `${observer.name} stayed beside ${owner.name} and listened to a story about ${subject.name}.`;
@@ -286,7 +286,7 @@ window.ClanQuirks = (() => {
                 rememberDiscovery(observer, owner, true);
                 outcome = `${owner.name} opened up. “${motives[owner.hiddenMotive].line}”`;
             } else {
-                outcome = `${owner.name} changed the subject. ${observer.name} still doesn't know ${knowledge.discovered ? "why they do it" : "what was happening"}.`;
+                outcome = `${owner.name} changed the subject. ${observer.name} still doesn't know ${knowledge.discovered ? "why they do it" : "what is going on"}.`;
             }
         } else if (action === "watch") {
             rememberDiscovery(observer, owner);
@@ -297,9 +297,9 @@ window.ClanQuirks = (() => {
                 owner.quirkPublic = true;
                 Relationships.setRelationship(owner, observer, game.relationship(owner, observer) - 6,
                     game.relationship(observer, owner));
-                outcome = `${observer.name} told the clan what they had seen. ${fill(def.proof, owner, subject)}`;
+                outcome = `${observer.name} told the Clan what they had seen. ${fill(def.proof, owner, subject)}`;
                 if (owner.hiddenQuirk === "prey_cacher") {
-                    outcome += ` The clan recovered ${releaseCache(owner, state)} prey.`;
+                    outcome += ` The Clan recovered ${releaseCache(owner, state)} prey.`;
                 } else if (owner.hiddenQuirk === "secret_caretaker") {
                     owner.caretakerPauseUntil = state.day + 8;
                     outcome += ` ${owner.name} stopped visiting the elders' den in secret.`;
@@ -308,7 +308,7 @@ window.ClanQuirks = (() => {
             } else if (action === "support") {
                 outcome = help(owner, observer, subject, state);
             } else {
-                outcome = `${observer.name} decided to keep what they learned about ${owner.name} private.`;
+                outcome = `${observer.name} decided to keep what they learned about ${owner.name} to themselves.`;
             }
         }
         game.rememberEvent(observer, knowledge.discovered ? "quirk_discovery" : "quirk_clue", {
@@ -336,7 +336,7 @@ window.ClanQuirks = (() => {
             if (owner.hiddenQuirk === "prey_cacher" && owner.quirkSupported && owner.hiddenPrey &&
                 state.prey < game.expectedMeals()) {
                 const amount = releaseCache(owner, state);
-                game.logEvent("clan", `${owner.name} brought ${amount} stored prey to the clan during the shortage.`);
+                game.logEvent("clan", `${owner.name} brought ${amount} stored prey to the Clan during the shortage.`);
             }
             if (owner.hiddenQuirk === "secret_caretaker" && state.day >= (owner.caretakerPauseUntil ?? 0) && state.day % 4 === 0) {
                 const subject = subjectFor(owner, state);
@@ -364,7 +364,7 @@ window.ClanQuirks = (() => {
             if (owner.hiddenQuirk === "storm_watcher" && owner.quirkSupported &&
                 state.disaster?.weatherStart != null && !state.disaster.warnClan && state.disaster.day >= state.day) {
                 state.disaster.warnClan = true;
-                game.logEvent("weather", `${owner.name} warned the clan that the river was rising. Camp began preparing.`);
+                game.logEvent("weather", `${owner.name} warned the Clan that the river was rising. Camp began preparing.`);
             }
         }
     }

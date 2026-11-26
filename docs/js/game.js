@@ -332,7 +332,7 @@
             }
 
             if (effect.type === "clan_fight") {
-                return resolveClanFight(participants.instigator, participants.other);
+                return resolveClanFight(participants.instigator, participants.other, effect);
             }
             if (effect.type === "broken_ground_rescue") {
                 return StoryEvents.resolveBrokenGround(effect, participants);
@@ -504,13 +504,13 @@
 
                 const concern = mateConcern(challenger, partner);
                 concern.pending = null;
-                concern.trust = clamp((concern.trust ?? challenger.trust ?? 50) + effect.trust, 0, 100);
+                Relationships.adjustTrust(challenger, partner, effect.trust);
                 concern.suspicion = effect.suspicion;
                 setRelationship(challenger, partner, relationship(challenger, partner) + effect.bond);
 
                 if (effect.separate) {
-                    endMateTie(challenger, partner.id);
-                    endMateTie(partner, challenger.id);
+                    endMateTie(challenger, partner.id, "breakup");
+                    endMateTie(partner, challenger.id, "breakup");
                 } else if (effect.endOutsideTie) {
                     clearOutsideTie(partner, effect.interestId);
                 }
@@ -561,7 +561,7 @@
     }
 
 
-    function resolveClanFight(instigator, other) {
+    function resolveClanFight(instigator, other, { publicOpening, privateReason }) {
         if (!instigator?.alive || !other?.alive || instigator === other) return;
         const fighters = [instigator, other];
         const leader = livingCats().find(cat => cat.rank === "Leader" && !cat.quarantined && !fighters.includes(cat));
@@ -569,7 +569,7 @@
         const someoneIsInjured = chance(.30);
         const fatal = chance(.01);
         const deceased = fatal ? pick(fighters) : null;
-        const lines = [];
+        const lines = publicOpening ? [publicOpening] : [];
 
         CatConditions.recordContact(fighters, "close", state.day);
         if (leaderStepsIn) {
@@ -586,7 +586,9 @@
         }
         if (deceased) lines.push(`${deceased.name} died from an accidental injury during the fight.`);
         const outcome = lines.join(" ");
-        recordCatEvent("clan_fight", fighters, { description: outcome, importance: deceased ? 5 : 3 });
+        recordCatEvent("clan_fight", fighters, {
+            description: outcome, importance: deceased ? 5 : 3, fightOpeningRecorded: !!publicOpening, privateFightReason: privateReason
+        });
         if (deceased) {
             recordDeath(deceased, lines.at(-1));
             resolveLeadershipVacancy();
@@ -1866,6 +1868,9 @@
                 hurtful_rumor: "because they believed the cat had mocked them",
                 false_rumor: "for spreading a false rumor",
                 unfair_accusation: "for accusing them of spoiling a hunt",
+                fresh_kill_dispute: "for calling them out over how fresh-kill was shared",
+                unfair_medicine_den_accusation: "for making an unsupported accusation about a death in the medicine den",
+                betrayal_of_care: "for betraying the trust placed in them as a healer",
                 public_insult: "for insulting them in front of their clanmates"
             };
             description += ` ${cat.name} ${past ? "distrusted" : "distrusts"} ${name} ${reasons[grievance.cause]}.`;
@@ -1897,6 +1902,7 @@
             if (other.id === cat.id) continue;
             const { mates, bestFriends } = cat.relationships;
             const bond = relationship(cat, other);
+            const trust = cat.id === state.playerCatId ? Relationships.trustToward(cat, other) : null;
             const feeling = jealousyAdmirationLabel(jealousyAdmiration(cat, other));
             const formerMate = !other.alive && other.relationships.mates?.includes(cat.id);
             const mate = mates?.includes(other.id) || formerMate;
@@ -1928,6 +1934,8 @@
             if (grievance) addTie("enemies", "Enemy");
             if (cat.mentorId === other.id) ties.push("Mentor");
             if (other.mentorId === cat.id) ties.push("Apprentice");
+            const denSuspicion = state.playerCatId === cat.id ? DeathberryIncidents.suspicion(cat, other) : 0;
+            if (denSuspicion) ties.push(`Medicine den suspicion ${denSuspicion}/5`);
             const priority = ties.length ? 1 : 0;
 
             if (crush) addTie("romance", "Crush");
@@ -1935,12 +1943,12 @@
             if (bond >= 25) categories.add("friends");
 
             if (!other.alive && !categories.has("family") && !ties.length) continue;
-            if (!ties.length && bond === 0 && feeling === "neutral") continue;
+            if (!ties.length && bond === 0 && feeling === "neutral" && (trust === null || trust === 50)) continue;
             if (profileView.filter !== "all" && !categories.has(profileView.filter)) continue;
             const description = describeRelationship(cat, other, bond, feeling, {
                 mate, bestFriend, rivalries, grievance, crush, knownAdmirer
             });
-            cards.push({ other, bond, description, ties, priority });
+            cards.push({ other, bond, trust, description, ties, priority });
         }
 
         cards.sort((a, b) => b.priority - a.priority ||
@@ -1950,12 +1958,13 @@
             ${filters.map(label => profileControl("filter", label.toLowerCase(), label, profileView.filter)).join("")}
         </div>
         <div class="profile-card-list">
-            ${cards.map(({ other, bond, description, ties }) => `
+            ${cards.map(({ other, bond, trust, description, ties }) => `
                 <article class="profile-card">
                     <h4>${escapeHtml(other.name)}${other.alive ? "" : " <small>· Deceased</small>"}</h4>
                     ${ties.length ? `<div class="tag-row">${ties.map(tie => `<span class="tag">${escapeHtml(tie)}</span>`).join("")}</div>` : ""}
                     <p>${escapeHtml(description)}</p>
                     <p class="muted">${escapeHtml(cat.name)}’s bond · ${bond > 0 ? "+" : ""}${bond}</p>
+                    ${trust === null ? "" : `<p class="muted">Trust in ${escapeHtml(other.name)} · ${trust}/100</p>`}
                     <button type="button" class="button small" data-profile-shared="${escapeHtml(other.id)}"
                         aria-label="View shared memories with ${escapeHtml(other.name)}">View shared memories</button>
                 </article>`).join("") || '<p class="muted">No relationships in this view yet.</p>'}
@@ -1980,17 +1989,21 @@
 
         function timeline(entries) {
             return `<ol class="profile-card-list memory-timeline">${entries.map(memory => {
-                const title = memory.event === "starclan_dream"
-                    ? "StarClan dream"
+                const title = memory.event === "starclan_dream" ? "StarClan dream"
+                    : memory.event === "deathberry_nightmare" ? "Nightmare"
                     : prettyTrait((memory.event || "Memory").replaceAll("_", " "));
                 const participants = (memory.participants ?? [])
                     .map(id => catsById.get(id)?.name)
                     .filter(Boolean);
                 const description = memory.description?.includes("{") ? "" : memory.description;
+                const fightContext = memory.privateFightReason?.ownerId === state.playerCatId
+                    ? memory.privateFightReason?.text
+                    : memory.event === "clan_fight" && !memory.fightOpeningRecorded ? "Cause unknown." : "";
                 return `<li class="profile-card">
                     ${memory.day == null ? "" : `<div class="muted">Day ${escapeHtml(memory.day)}</div>`}
                     <h4>${escapeHtml(title)}</h4>
                     ${description ? `<p>${escapeHtml(description)}</p>` : ""}
+                    ${fightContext ? `<p>${escapeHtml(fightContext)}</p>` : ""}
                     ${participants.length ? `<p class="muted">With ${escapeHtml(participants.join(", "))}</p>` : ""}
                 </li>`;
             }).join("")}</ol>`;
@@ -2702,23 +2715,36 @@
                 ...(hasShelteredHuntFallback(loc, effects, plan.goal) ? ["Fallback catch on a missed hunt"] : []),
                 ...(plan.energySaved ? [`${plan.energySaved} energy saved each`] : [])
             ].join(" · ") : "";
-            const notes = [
-                patrolHealer ? `Gather here: ${ClanHerbs.at(loc).map(herb => herb.name).join(", ")}` : "",
+            const herbs = patrolHealer ? ClanHerbs.at(loc).map(herb => herb.name).join(", ") : "";
+            const routeEffects = [
                 effects.energy ? `+${effects.energy} energy cost` : "",
                 effects.heatExhaustionRisk ? `${Math.round(effects.heatExhaustionRisk * 100)}% heat exhaustion risk per cat` : "",
                 effects.weatherRisk === 2 ? "Dangerous river crossing in the thunderstorm" :
                     effects.weatherRisk ? "Higher risk in heavy rain" : "",
-                effects.burnedUntil ? `Wildfire damage through Day ${effects.burnedUntil} · Higher patrol risk and fewer herbs` : "",
                 effects.prey ? `${effects.prey > 0 ? "+" : ""}${effects.prey} prey on success` : ""
             ].filter(Boolean);
-            return `<button class="location-card" data-patrol="${loc.id}">
+            const wildfire = effects.burnedUntil ? `
+                <span class="location-hazard">
+                    <strong>Wildfire damage through Day ${effects.burnedUntil}</strong>
+                    <span>Higher patrol risk and fewer herbs</span>
+                </span>` : "";
+            return `<button type="button" class="location-card" data-patrol="${loc.id}">
         <span class="location-emoji">${loc.emoji}</span>
         <h3>${loc.name}</h3>
         <p>${loc.desc}</p>
         <span class="location-difficulty">${loc.difficulty} patrol</span>
         <p>${roles}</p>
         ${forecast ? `<p class="muted">${forecast}</p>` : ""}
-        ${notes.length ? `<p class="muted">${notes.join(" · ")}</p>` : ""}
+        ${herbs || wildfire || routeEffects.length ? `
+            <span class="location-details">
+                ${herbs ? `<span><strong>Herbs</strong> ${escapeHtml(herbs)}</span>` : ""}
+                ${wildfire}
+                ${routeEffects.length ? `
+                    <span class="location-modifiers">
+                        <strong>Route modifiers</strong>
+                        ${routeEffects.map(effect => `<span>${escapeHtml(effect)}</span>`).join("")}
+                    </span>` : ""}
+            </span>` : ""}
       </button>`;
         }).join("");
 
@@ -2825,7 +2851,7 @@
 
     function treatPatient(healer, patient, herb) {
         if (!patient || healer.lastTreatmentDay === state.day) return;
-        if (!herb) return "Choose a supply from the medicine den first.";
+        if (!herb || herb.lethal) return "Choose a remedy from the medicine den first.";
         const stock = ClanHerbs.count(state.herbInventory, herb);
         const cost = patient.herbCost;
         if (stock < cost) {
@@ -2834,13 +2860,7 @@
         state.herbInventory[herb.id] -= cost;
         healer.lastTreatmentDay = state.day;
         let outcome;
-        if (herb.lethal) {
-            outcome = `${patient.cat.name} died after being given deathberries.`;
-            recordDeath(patient.cat, outcome);
-            resolveLeadershipVacancy();
-            if (state.playerCatId === patient.cat.id) state.playerCatId = livingCats()[0]?.id ?? null;
-            if (selectedCatId === patient.cat.id) selectedCatId = state.playerCatId;
-        } else if (!herb.treats.includes(patient.condition.id)) {
+        if (!herb.treats.includes(patient.condition.id)) {
             const condition = patient.condition;
             condition.lastTreatmentAttemptDay = state.day;
             const delay = Math.min(2, 4 - (condition.treatmentDelay ?? 0));
@@ -2853,8 +2873,10 @@
             outcome = CatConditions.treat(healer, patient, state.day);
         }
         const message = `${outcome} Used ${cost} × ${herb.name}.`;
-        logEvent("treatment", message);
-        return message;
+        const review = herb.treats.includes(patient.condition.id) ? DeathberryIncidents.noteCare(healer, patient.cat) : "";
+        const report = review ? `${message} ${review}` : message;
+        logEvent("treatment", report);
+        return report;
     }
 
     function setQuarantine(patient, isolated) {
@@ -2880,6 +2902,8 @@
         const apprentice = medicineApprentice(healer);
         const reservedKit = reservedMedicineKit(healer);
         const unavailable = healer.quarantined || healer.health < 35;
+        const review = DeathberryIncidents.oversight(healer);
+        const berries = healer.deathberryCache ?? 0;
         const button = (action, label, cat, disabled = false) =>
             `<button type="button" class="button primary" data-medicine-action="${action}" data-patient="${escapeHtml(cat.id)}"${disabled ? " disabled" : ""}>${label}</button>`;
         const choices = apprentice || reservedKit ? "" : [
@@ -2894,9 +2918,13 @@
             <p>Each medicine cat can gather herbs once per day. <br>Diagnose illnesses and injuries to level up healing skill.</p>
             <h3>Medicine stores</h3>
             <ul>
-                ${ClanHerbs.herbs.map(herb => `<li>${herb.name} · <strong>${ClanHerbs.count(state.herbInventory, herb)}</strong>${herb.lethal ? " · Lethal" : ""}</li>`).join("")}
+            ${ClanHerbs.medicinal.map(herb => `<li>${herb.name} · <strong>${ClanHerbs.count(state.herbInventory, herb)}</strong></li>`).join("")}
             </ul>
+            ${berries ? `<p>Hidden cache: ${berries} deathberr${berries === 1 ? "y" : "ies"}.</p>` : ""}
+            ${review ? `<p>Care is under review until day ${review.supervisionUntil}. Ordinary treatment is available.</p>` : ""}
+            ${DeathberryIncidents.pendingConfession(healer) ? button("deathberry-confession", "Speak to Clan leader", healer) : ""}
             ${unavailable ? "<p>Rest until you can care for other cats again.</p>" : ""}
+            <p></p>
             <h3>Patients</h3>
             ${patients.map(cat => {
                 const available = !unavailable || cat === healer;
@@ -2904,26 +2932,30 @@
                     condition.diagnosedSeverity === condition.severity && condition.diagnosedStageDay === condition.stageDay);
                 const status = !needsIsolation(cat) ? "Healthy" :
                     diagnosed ? CatConditions.describe(cat, state.day).join("; ") : "Unwell";
+                const requestsAnother = DeathberryIncidents.prefersOtherHealer(cat, healer);
                 return `<div class="profile-card">
                     <strong>${escapeHtml(cat.name)}</strong>
                     <p>${escapeHtml(status)}${cat.quarantined ? " · In quarantine" : ""}</p>
+                    ${requestsAnother ? "<p>Would prefer another healer if one is available.</p>" : ""}
                     <div class="profile-controls">
                         ${button("diagnose", "Diagnose", cat, !available)}
                         ${button(cat.quarantined ? "release" : "quarantine", cat.quarantined ? "Release" : "Quarantine", cat, !available)}
+                        ${DeathberryIncidents.canAskWishes(healer, cat) ? button("care-wishes", "Ask what they need", cat) : ""}
+                        ${DeathberryIncidents.eligible(healer, cat) ? button("deathberry", "Feed deathberry", cat) : ""}
                     </div>
                     ${treatment.filter(patient => patient.cat === cat).map(patient => {
                         const known = patient.condition.diagnosedSeverity === patient.condition.severity &&
                             patient.condition.diagnosedStageDay === patient.condition.stageDay;
                         const disabled = !available || healer.lastTreatmentDay === state.day;
                         const id = escapeHtml(`herb-${cat.id}-${patient.condition.id}`);
-                        const options = ClanHerbs.herbs.filter(herb => ClanHerbs.count(state.herbInventory, herb) > 0);
+                        const options = ClanHerbs.medicinal.filter(herb => ClanHerbs.count(state.herbInventory, herb) > 0);
                         return `<div class="profile-controls">
                             <label for="${id}">${known ? patient.name : "Undiagnosed condition"} · ${patient.herbCost} needed</label>
                             <select id="${id}"${disabled ? " disabled" : ""}>
                                 <option value="">Choose a supply</option>
                                 ${options.map(herb => {
                                     const stock = ClanHerbs.count(state.herbInventory, herb);
-                                    return `<option value="${herb.id}"${stock < patient.herbCost ? " disabled" : ""}>${herb.name} (${stock})${herb.lethal ? " — lethal" : ""}</option>`;
+                                    return `<option value="${herb.id}"${stock < patient.herbCost ? " disabled" : ""}>${herb.name} (${stock})</option>`;
                                 }).join("")}
                             </select>
                             <button type="button" class="button primary" data-medicine-action="treat"
@@ -2935,7 +2967,7 @@
             }).join("") || "<p>No cats need care today.</p>"}
             <h3>Apprentice</h3>
             ${apprentice ? `<p>${escapeHtml(apprentice.name)} is training with you.</p>` : reservedKit ? `
-                <p>You privately chose ${escapeHtml(reservedKit.name)}. The clan will learn of your choice when the kit turns 6 moons old.</p>
+                <p>You privately chose ${escapeHtml(reservedKit.name)}. The Clan will learn of your choice when the kit turns 6 moons old.</p>
                 ${button("cancel-reservation", "Cancel reservation", reservedKit, unavailable)}
             ` : choices ? `
                 <p>Reserve a kit privately or choose an apprentice to start medicine cat training now.</p>
@@ -2951,6 +2983,15 @@
         const cat = getCat(id);
         if (healer?.rank !== "Medicine Cat" || !cat ||
             (healer !== cat && (healer.quarantined || healer.health < 35))) return;
+
+        if (["deathberry", "deathberry-confession", "care-wishes"].includes(action)) {
+            if ($("questCard").hidden) {
+                if (action === "deathberry") DeathberryIncidents.openChoice(healer, cat);
+                else if (action === "care-wishes") DeathberryIncidents.askWishes(healer, cat);
+                else if (healer === cat) DeathberryIncidents.confession(healer);
+            }
+            return;
+        }
 
         let message;
         if (action === "diagnose" && needsIsolation(cat)) {
@@ -2990,8 +3031,10 @@
         for (const cat of cats) {
             if (cat.quarantined && !needsIsolation(cat)) setQuarantine(cat, false);
         }
+        DeathberryIncidents.recordPatientRequests();
 
-        for (const healer of healers) {
+        const patientsAvoiding = healer => cats.filter(cat => DeathberryIncidents.prefersOtherHealer(cat, healer)).length;
+        for (const healer of healers.sort((a, b) => patientsAvoiding(a) - patientsAvoiding(b))) {
             if (healer.id === state.playerCatId || healer.health < 35 || healer.energy < 20) continue;
             const accessible = healer.quarantined ? [healer] : cats;
             for (const cat of accessible) {
@@ -3017,7 +3060,8 @@
                 healer.energy = clamp(healer.energy - 10, 0, 100);
                 busy.add(healer.id);
             }
-            const affordable = treatment.find(candidate => ClanHerbs.affordable(stock, candidate));
+            const affordable = treatment.find(candidate => !DeathberryIncidents.prefersOtherHealer(candidate.cat, healer) &&
+                ClanHerbs.affordable(stock, candidate)) ?? treatment.find(candidate => ClanHerbs.affordable(stock, candidate));
             if (affordable && healer.lastTreatmentDay !== state.day) {
                 if (affordable.cat !== patient.cat) diagnosePatient(healer, affordable.cat, false);
                 treatPatient(healer, affordable, ClanHerbs.affordable(stock, affordable));
@@ -3111,6 +3155,10 @@
             state.medicineDream = null;
             return false;
         }
+        if (dream.visitorId && DeathberryIncidents.isVictimOf(healer.id, dream.visitorId)) {
+            delete dream.visitorId;
+            dream.omen = medicineOmen(healer, dream.kind);
+        }
 
         if (healer.id !== state.playerCatId) {
             const open = ["gentle", "loyal", "bold"].includes(healer.personality);
@@ -3137,6 +3185,15 @@
         return true;
     }
 
+    function medicineOmen(healer, kind, visitor) {
+        const vision = kind === "wildfire"
+            ? "flaming trees and dark ash falling like snow into the camp clearing"
+            : "floodwater bursting through the camp entrance and washing away everything dear";
+        return visitor
+            ? `${visitor.name} appeared in ${healer.name}'s dream and showed them ${vision}.`
+            : `${healer.name} dreamed of ${vision}.`;
+    }
+
     function rollMedicineDream() {
         if (state.day < state.nextDreamDay) return false;
         const pending = state.disaster;
@@ -3145,7 +3202,8 @@
         for (const healer of livingCats().filter(cat => cat.rank === "Medicine Cat")) {
             if (!chance(clamp(healer.faith ?? 50, 0, 100) * (canForeseeDisaster ? .003 : .002))) continue;
             state.nextDreamDay = state.day + 10;
-            const visitor = state.starClan.length ? pick(state.starClan) : null;
+            const visitors = state.starClan.filter(cat => !DeathberryIncidents.isVictimOf(healer.id, cat.id));
+            const visitor = visitors.length ? pick(visitors) : null;
             let threat = canForeseeDisaster && chance(.65) ? pending : null;
             if (!threat && canScheduleWildfire() && chance(.04)) {
                 threat = queueWildfire(state.day + rand(2, 3), "dream");
@@ -3169,11 +3227,7 @@
                 logEvent("dream", description);
                 return false;
             }
-            const vision = threat.kind === "wildfire"
-                ? "flaming trees and dark ash falling like snow into the camp clearing" : "floodwater bursting through the camp entrance and washing away everything dear.";
-            const omen = visitor
-                ? `${visitor.name} appeared in ${healer.name}'s dream and showed them ${vision}.`
-                : `${healer.name} dreamed of ${vision}.`;
+            const omen = medicineOmen(healer, threat.kind, visitor);
             threat.omenSeen = true;
             state.medicineDream = {
                 healerId: healer.id, day: threat.day, kind: threat.kind ?? "flood", weatherStart: threat.weatherStart, omen,
@@ -3540,6 +3594,7 @@
 
     function strengthenPatrolRelationships(patrol) {
         Relationships.strengthenPatrolBonds(patrol);
+        ClanSocial.successfulPatrol(patrol);
         const survivors = patrol.filter(cat => cat.alive);
         for (const [index, first] of survivors.entries()) {
             for (const second of survivors.slice(index + 1)) {
@@ -3575,7 +3630,9 @@
         const playerScenes = scenes.filter(scene => scene.actor.id === state.playerCatId);
         if (!scenes.length) return;
         const scene = pick(playerScenes.length ? playerScenes : scenes);
-        if (!chance(.20 + .12 * (scene.enmity?.distrust ?? scene.rivalry.intensity))) return;
+        const understanding = ClanSocial.patrolUnderstanding(scene.actor, scene.other);
+        if (!chance((.20 + .12 * (scene.enmity?.distrust ?? scene.rivalry.intensity)) *
+            (understanding && !scene.enmity ? .45 : 1))) return;
         const { actor, other, rivalry, enmity, event } = scene;
         const participants = { actor, other };
 
@@ -3759,13 +3816,15 @@
         const location = LOCATIONS.find(loc => loc.id === "pinewood");
         const candidates = cats.filter(cat => cat.id !== state.playerCatId && cat !== shortHunter &&
             ["Leader", "Deputy", "Warrior", "Apprentice"].includes(cat.rank) && canPatrol(cat));
-        const patrol = ClanPatrols.selectTeam(location, candidates);
+        const team = ClanPatrols.selectTeam(location, candidates, null, undefined, ClanSocial.patrolPreference);
+        const patrol = ClanSocial.givePatrolRelief(leader, team, candidates);
         if (patrol.length) {
             logEvent("patrol", `${leader.name} sent ${patrol.map(cat => cat.name).join(", ")} to hunt at ${location.name}.`);
             resolvePatrol(location, patrol);
             handlePatrolConflict(patrol);
         }
-        return shortHunter ? [...patrol, shortHunter] : patrol;
+        // An excused cat rests for the day in place of taking an individual activity.
+        return [...new Set([...team, ...patrol, ...(shortHunter ? [shortHunter] : [])])];
     }
     function trainPlayer() {
         const c = playerCat();
@@ -3837,11 +3896,13 @@
                 if (newCrushes.length) text += ` ${newCrushes.join(" ")}`;
             }
 
+            const privateReport = choice.spendTime && DeathberryIncidents.share(other, c);
+            if (choice.spendTime) DeathberryIncidents.share(c, other);
             c.notes.push(text);
             logEvent("relationship", text);
             saveGame(false);
             render();
-            showNotice(text);
+            showNotice(privateReport ? `${text} ${privateReport}` : text);
         });
     }
 
@@ -4073,6 +4134,7 @@
     }
 
     function tryGenerateGossip(cat, other) {
+        if (DeathberryIncidents.share(cat, other) || DeathberryIncidents.share(other, cat)) return "";
         const thirdCats = livingCats().filter(candidate =>
             candidate.id !== cat.id &&
             candidate.id !== other.id
@@ -4154,7 +4216,8 @@
                         const gossip = window.Gossip.createGossip(
                             "crush",
                             subject.id,
-                            crush.id
+                            crush.id,
+                            { heardDay: state.day, heardWithId: listener === cat ? other.id : cat.id }
                         );
 
                         if (!window.Gossip.recordGossip(listener, gossip)) return;
@@ -4474,13 +4537,12 @@
             if (state.pendingDeathberryDiscovery !== pending) return;
             delete state.pendingDeathberryDiscovery;
             const collected = choice.id === "collect";
-            if (collected) {
-                const herb = ClanHerbs.get("deathberries");
-                state.herbInventory[herb.id] = ClanHerbs.count(state.herbInventory, herb) + 1;
-            }
+            if (collected) healer.deathberryCache = (healer.deathberryCache ?? 0) + 1;
             const outcome = collected ? `${healer.name} tucked a deathberry into a hidden cache within their den.`
                 : `${healer.name} decided to leave the deathberries alone.`;
-            recordCatEvent("deathberry_discovery", [healer], { description: outcome, importance: 3, logToChronicle: true });
+            rememberEvent(healer, "deathberry_discovery", {
+                description: outcome, importance: 3, privateOwnerId: healer.id
+            });
             saveGame(false);
             render();
             showNotice(outcome);
@@ -4503,6 +4565,8 @@
         if (showDeathberryDiscovery()) return;
         if (showVigil()) return;
         if (state.medicineDream && showMedicineDream()) return;
+        if ($("questCard").hidden && DeathberryIncidents.showNightmare()) return;
+        if (DeathberryIncidents.advance()) return;
         // Advance daily clock
         state.day++;
         if ((state.day - 1) % ClanWeather.DAYS_PER_SEASON === 0) {
@@ -4552,6 +4616,7 @@
         if (hungry.length > meals.length) {
             const unfed = hungry.length - meals.length;
             logEvent("clan", `${unfed} ${unfed === 1 ? "cat went" : "cats went"} without a meal.`);
+            ClanSocial.startFoodDispute(hungry.slice(meals.length), meals);
         }
 
         cats.forEach(c => {
@@ -4580,6 +4645,7 @@
 
         resolveLeadershipVacancy();
         const huntingPatrol = new Set(runNpcLeaderDay());
+        ClanSocial.daily(new Set([...huntingPatrol, ...livingCats().filter(cat => medicineDuty.has(cat.id))]));
         for (const cat of livingCats()) {
             if (cat.id !== state.playerCatId && !huntingPatrol.has(cat) &&
                 (!medicineDuty.has(cat.id) || cat.quarantined)) {
@@ -4595,7 +4661,8 @@
         apprenticeTrainingEvent();
         updateFamilies();
         const giftStoryActive = advanceGiftStory();
-        const dreamActive = !giftStoryActive && rollMedicineDream();
+        const dreamActive = !giftStoryActive && (rollMedicineDream() ||
+            ($("questCard").hidden && DeathberryIncidents.showNightmare()));
 
         // Small spontaneous camp events.
         if (chance(.55)) {
@@ -4961,6 +5028,13 @@
             loaded.starClan = archivedCats.slice(0, STARCLAN_LIMIT);
             loaded.cats = loaded.cats.filter(cat => cat.alive !== false);
             const historyCats = [...loaded.cats, ...loaded.starClan];
+            const legacyCache = loaded.herbInventory.deathberries;
+            const healers = loaded.cats.filter(cat => cat.rank === "Medicine Cat");
+            const cacheOwner = healers.find(cat => cat.id === loaded.playerCatId) ?? healers[0];
+            if (legacyCache > 0 && cacheOwner) {
+                cacheOwner.deathberryCache = (cacheOwner.deathberryCache ?? 0) + legacyCache;
+                delete loaded.herbInventory.deathberries;
+            }
 
             // Fill in defaults for stats added in newer versions.
             historyCats.forEach(cat => {
@@ -5262,6 +5336,30 @@
     ClanQuirks.initialize({ getState: () => state, expectedMeals, rand, chance, relationship, rememberEvent, logEvent, startGiftStory });
     initializeSocialReactions();
     initializeGossip();
+    ClanSocial.initialize({
+        state: () => state, cats: livingCats, relationship, chance, rand, expectedMeals, skill: CatConditions.skill,
+        remember: recordCatEvent, rememberEvent
+    });
+    DeathberryIncidents.initialize({
+        state: () => state, cats: livingCats, getCat, clamp, pick, chance, relationship, setRelationship,
+        areCloseRelatives, needsIsolation, apprentice: medicineApprentice, canTakeApprentice: canChooseMedicineApprentice,
+        transferApprentice: assignMedicineApprentice, rememberEvent, recordDeath, log: logEvent,
+        grievance: Relationships.recordGrievance, resolveGrievance: Relationships.resolveGrievance,
+        afterDeath(patient) {
+            resolveLeadershipVacancy();
+            if (selectedCatId === patient.id) selectedCatId = state.playerCatId;
+        },
+        scene(title, description, actor, choices, resolve) {
+            const returnView = selectedView;
+            StoryEvents.showStoryEvent({ title, description, choices, decisionMaker: "actor" }, { actor }, choice => {
+                switchView(returnView);
+                const message = resolve(choice.id);
+                saveGame(false);
+                render();
+                if (message) showNotice(message);
+            });
+        }
+    });
     CatRenderer.initialize(COLORS);
     selectedCatId = state.playerCatId || livingCats()[0]?.id || null;
 
@@ -5272,5 +5370,6 @@
         if (state.giftStory?.stage === "reveal" && state.giftStory.nextDay <= state.day) {
             advanceGiftStory();
         }
+        if ($("questCard").hidden) DeathberryIncidents.showNightmare();
     }
 })();

@@ -16,6 +16,19 @@ window.Relationships = (() => {
         return a.relationships[b.id] ?? 0;
     }
 
+    function trustToward(cat, other) {
+        const ties = cat.relationships;
+        return ties?.trustByCat?.[other.id] ?? ties?.mateConcerns?.[other.id]?.trust ??
+            (ties?.mates?.includes(other.id) ? cat.trust ?? 50 : 50);
+    }
+
+    function adjustTrust(cat, other, amount) {
+        const trust = clamp(trustToward(cat, other) + amount, 0, 100);
+        const ties = cat.relationships ??= {};
+        (ties.trustByCat ??= {})[other.id] = trust;
+        return trust;
+    }
+
     function jealousyAdmiration(a, b) {
         // no cats? no relationships? no problem
         if (!a || !b || !a.relationships) {
@@ -301,6 +314,8 @@ window.Relationships = (() => {
     return {
         initialize,
         relationship,
+        trustToward,
+        adjustTrust,
         relationshipLabel,
         routineBondGain,
         strengthenPatrolBonds,
