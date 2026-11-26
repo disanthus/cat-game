@@ -8,17 +8,17 @@ art + code made by me
 - randomized founder cats
 - cat art rendered layer by layer to make each one unique
 - npc autonomy
-- relationship system
+- relationship system 
 - gossip system
+- weather system
+- illness & injury
 - social reactions to events and interactions between cats
-- light events system with event memory
+- story events & memory system
 - breeding system with simple genetics 
 
 # planned features
 - more events w/ branching outcomes
 - more personalities & hidden traits
-- fights & beef between cats
-- illnesses & injuries
 - even more autonomy (esp for npc leaders)
 - rpg elements for players to make roles like leader/deputy/medcat more interesting
 
